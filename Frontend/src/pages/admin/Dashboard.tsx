@@ -118,7 +118,7 @@ export const AdminDashboard: React.FC = () => {
         
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Platform Users Audit</h3>
-          <div className="card" style={{ padding: 0, backgroundColor: 'white', overflow: 'hidden' }}>
+          <div className="card" style={{ padding: 0, backgroundColor: 'white', overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--surface-raised)', borderBottom: '1px solid var(--border)' }}>

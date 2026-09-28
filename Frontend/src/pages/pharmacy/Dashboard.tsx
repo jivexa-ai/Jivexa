@@ -385,7 +385,7 @@ export const PharmacyDashboard: React.FC = () => {
               </span>
             </div>
 
-            <div style={{ border: '1px solid var(--border)', borderRadius: '16px', overflow: 'hidden' }}>
+            <div style={{ border: '1px solid var(--border)', borderRadius: '16px', overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
                 <thead>
                   <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid var(--border)' }}>
