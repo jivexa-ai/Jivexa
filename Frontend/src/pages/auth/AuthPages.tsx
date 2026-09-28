@@ -192,7 +192,7 @@ const RoleSelectorCards: React.FC<{ activeRole: UserRole; onSelectRole: (role: U
         Select Account Category:
       </label>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+      <div className="grid-2-mobile" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
         {roles.map((r) => {
           const isSelected = activeRole === r.id;
           return (
@@ -373,7 +373,7 @@ export const Login: React.FC = () => {
       padding: '24px 20px',
       background: 'radial-gradient(circle at 50% 20%, rgba(2, 132, 199, 0.08) 0%, rgba(16, 185, 129, 0.04) 50%, transparent 80%)'
     }}>
-      <div style={{
+      <div className="flex-col-mobile" style={{
         display: 'flex',
         maxWidth: '1040px',
         width: '100%',
@@ -397,7 +397,7 @@ export const Login: React.FC = () => {
                 Select your account category below and enter your credentials.
               </span>
             </div>
-          } style={{ width: '100%', borderRadius: '24px', boxShadow: 'var(--shadow-xl)', padding: '32px' }}>
+          } className="mobile-p-16" style={{ width: '100%', borderRadius: '24px', boxShadow: 'var(--shadow-xl)', padding: '32px' }}>
 
             {/* 1. ROLE CARDS (BEFORE EMAIL FIELD) */}
             <RoleSelectorCards activeRole={activeRole} onSelectRole={handleTabChange} />
@@ -768,7 +768,7 @@ export const Signup: React.FC = () => {
       padding: '24px 20px',
       background: 'radial-gradient(circle at 50% 20%, rgba(2, 132, 199, 0.08) 0%, rgba(16, 185, 129, 0.04) 50%, transparent 80%)'
     }}>
-      <div style={{
+      <div className="flex-col-mobile" style={{
         display: 'flex',
         maxWidth: '1040px',
         width: '100%',
@@ -796,7 +796,7 @@ export const Signup: React.FC = () => {
                   : 'Select your account category below and complete basic registration.'}
               </span>
             </div>
-          } style={{ width: '100%', borderRadius: '24px', boxShadow: 'var(--shadow-xl)', padding: '32px' }}>
+          } className="mobile-p-16" style={{ width: '100%', borderRadius: '24px', boxShadow: 'var(--shadow-xl)', padding: '32px' }}>
 
             {/* STEP 1: INITIAL REGISTRATION FORM (BASIC CREDENTIALS ONLY - NO LICENSE CARDS) */}
             {step === 'FORM' && (

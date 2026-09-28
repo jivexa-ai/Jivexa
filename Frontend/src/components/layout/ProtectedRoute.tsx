@@ -17,8 +17,9 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowe
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        height: '100vh',
-        width: '100vw',
+        height: '100%',
+        minHeight: '100vh',
+        width: '100%',
         backgroundColor: 'var(--background)',
         gap: 'var(--space-md)'
       }}>

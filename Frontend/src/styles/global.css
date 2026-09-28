@@ -10,6 +10,7 @@
 html, body, #root {
   height: 100%;
   width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -221,7 +222,11 @@ a:hover {
     padding-left: 16px;
     padding-right: 16px;
   }
-  .grid-2-mobile {
+  .grid-1-mobile,
+  .grid-2-mobile,
+  .grid-3-mobile,
+  .grid-4-mobile,
+  .grid-5-mobile {
     grid-template-columns: 1fr !important;
   }
   .flex-col-mobile {
@@ -229,5 +234,38 @@ a:hover {
   }
   .sr-mobile-hide {
     display: none !important;
+  }
+  .sr-mobile-block {
+    display: block !important;
+  }
+  .chat-layout-mobile {
+    grid-template-columns: 1fr !important;
+  }
+  .mobile-p-16 {
+    padding: 16px !important;
+  }
+  .mobile-p-x-16 {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  
+  /* Generic fallback to prevent fixed-width modals and containers from overflowing on very small screens */
+  div[style*="width: 420px"],
+  div[style*="width: 500px"],
+  div[style*="width: 560px"],
+  div[style*="width: 600px"],
+  div[style*="width: 640px"],
+  div[style*="width: 700px"],
+  div[style*="width: 800px"],
+  div[style*="width: 320px"],
+  div[style*="width: 340px"],
+  div[style*="width: 360px"],
+  div[style*="width: 380px"],
+  div[style*="width: 400px"] {
+    max-width: 100% !important;
+  }
+  
+  .card, .glass-card {
+    max-width: 100% !important;
   }
 }
