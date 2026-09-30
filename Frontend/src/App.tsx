@@ -41,6 +41,7 @@ import {
   Login,
   Signup,
   Verify,
+  VerifyEmail,
   ForgotPassword,
 } from './pages/auth/AuthPages';
 
@@ -315,6 +316,15 @@ export const App: React.FC = () => {
             element={
               <PublicLayout>
                 <Verify />
+              </PublicLayout>
+            }
+          />
+
+          <Route
+            path="/verify-email"
+            element={
+              <PublicLayout>
+                <VerifyEmail />
               </PublicLayout>
             }
           />

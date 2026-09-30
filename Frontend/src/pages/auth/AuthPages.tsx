@@ -455,7 +455,7 @@ export const Login: React.FC = () => {
 
 // --- SIGNUP VIEW WITH STEP 2 OTP & ROLE VERIFICATION ---
 export const Signup: React.FC = () => {
-  const { signup, verifyEmail, sendOTP, submitRoleVerification } = useAuth();
+  const { signup, verifyEmail, sendOTP, submitRoleVerification, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -635,10 +635,10 @@ export const Signup: React.FC = () => {
       const res = await signup(trimmedEmail, trimmedName, role, trimmedPassword);
       if (res.success) {
         if (role === 'PATIENT') {
-          setSuccessMsg('🎉 Account registered successfully! Opening dashboard...');
+          setSuccessMsg('🎉 Account registered! Please check your email for a verification link.');
           setTimeout(() => {
-            navigate('/patient/dashboard');
-          }, 800);
+            logout();
+          }, 1500);
         } else {
           setStep('ROLE_VERIFICATION');
         }
@@ -725,17 +725,10 @@ export const Signup: React.FC = () => {
 
     try {
       await submitRoleVerification(payload);
-      setSuccessMsg('🎉 Professional verification details submitted! Workstation activated.');
+      setSuccessMsg('🎉 Professional details submitted! Please check your email for a verification link.');
       setTimeout(() => {
-        const dashboardRoutes: Record<UserRole, string> = {
-          PATIENT: '/patient/dashboard',
-          DOCTOR: '/doctor/dashboard',
-          PHARMACY: '/pharmacy/dashboard',
-          ADMIN: '/admin/dashboard',
-          AMBULANCE_PARTNER: '/ambulance/dashboard'
-        };
-        navigate(dashboardRoutes[role] || '/patient/dashboard');
-      }, 1000);
+        logout();
+      }, 1500);
     } catch (err) {
       setError('An error occurred submitting professional credentials.');
     } finally {
@@ -1047,6 +1040,82 @@ export const Signup: React.FC = () => {
 
 export const Verify: React.FC = () => {
   return <Signup />;
+};
+
+export const VerifyEmail: React.FC = () => {
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [message, setMessage] = useState('Verifying your email...');
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const token = params.get('token');
+    const email = params.get('email');
+
+    if (!token || !email) {
+      setStatus('error');
+      setMessage('Invalid verification link.');
+      return;
+    }
+
+    const verify = async () => {
+      try {
+        let backendUrl = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:5000';
+        // Ensure backendUrl doesn't end with slash
+        backendUrl = backendUrl.replace(/\/$/, '');
+        const res = await fetch(`${backendUrl}/user/verify-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, token })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setStatus('success');
+          setMessage('Email verified successfully! Redirecting to login...');
+          setTimeout(() => navigate('/login'), 3000);
+        } else {
+          setStatus('error');
+          setMessage(data.message || 'Verification failed.');
+        }
+      } catch (err) {
+        setStatus('error');
+        setMessage('Network error during verification.');
+      }
+    };
+    verify();
+  }, [location, navigate]);
+
+  return (
+    <div style={{ maxWidth: '420px', margin: '80px auto', padding: '0 20px', textAlign: 'center' }}>
+      <Card title="Email Verification" className="mobile-p-16" style={{ borderRadius: '24px', boxShadow: 'var(--shadow-xl)', padding: '32px' }}>
+        <div style={{ padding: '20px 0', display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
+          {status === 'loading' && (
+            <>
+              <RefreshCw size={32} className="spin-animation" style={{ color: 'var(--primary)' }} />
+              <p style={{ fontSize: '1.1rem', fontWeight: 700 }}>{message}</p>
+            </>
+          )}
+          {status === 'success' && (
+            <>
+              <CheckCircle2 size={48} style={{ color: '#10b981' }} />
+              <p style={{ fontSize: '1.1rem', fontWeight: 800, color: '#10b981' }}>{message}</p>
+            </>
+          )}
+          {status === 'error' && (
+            <>
+              <AlertTriangle size={48} style={{ color: '#ef4444' }} />
+              <p style={{ fontSize: '1.1rem', fontWeight: 800, color: '#ef4444' }}>{message}</p>
+            </>
+          )}
+        </div>
+      </Card>
+      <style>{`
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .spin-animation { animation: spin 2s linear infinite; }
+      `}</style>
+    </div>
+  );
 };
 
 export const ForgotPassword: React.FC = () => {

@@ -6,7 +6,9 @@ import {
   profile, 
   sendOTP, 
   verifyOTP, 
-  submitVerification 
+  submitVerification,
+  verifyEmail,
+  resendVerificationEmail
 } from "../controller/userController.js";
 import authUserMiddlewares from "../middlewares/authuserMiddlewares.js";
 
@@ -20,5 +22,7 @@ userRouter.get("/me", authUserMiddlewares, profile);
 userRouter.post("/send-otp", sendOTP);
 userRouter.post("/verify-otp", verifyOTP);
 userRouter.post("/submit-verification", authUserMiddlewares, submitVerification);
+userRouter.post("/verify-email", verifyEmail);
+userRouter.post("/resend-verification-email", resendVerificationEmail);
 
 export default userRouter;

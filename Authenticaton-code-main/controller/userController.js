@@ -1,7 +1,16 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import { Resend } from 'resend';
 import User from "../model/userSchema.js";
 import { signupSchema, loginSchema } from "../validators/userValidators.js";
+
+const getResendClient = () => {
+  if (!process.env.RESEND_API_KEY) {
+    console.warn("[Warning]: RESEND_API_KEY is not set in environment variables.");
+  }
+  return new Resend(process.env.RESEND_API_KEY);
+};
 
 const Createtoken = (id, email, role = 'PATIENT') => {
   const secret = process.env.JWT_SECRET;
@@ -67,13 +76,37 @@ export const signup = async (req, res) => {
       gstin
     });
 
+    // Generate Verification Token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedVerificationToken = await bcrypt.hash(verificationToken, 10);
+    userCreate.verificationToken = hashedVerificationToken;
+    userCreate.verificationTokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    await userCreate.save();
+
+    // Send Verification Email via Resend
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const verifyLink = `${FRONTEND_URL}/verify-email?token=${verificationToken}&email=${email}`;
+    
+    try {
+      const resendClient = getResendClient();
+      await resendClient.emails.send({
+        from: 'Jivexa AI <onboarding@resend.dev>', // Update with your domain if configured in Resend
+        to: email,
+        subject: 'Verify your email for Jivexa AI',
+        html: `<p>Hi ${name},</p><p>Please verify your email address by clicking the link below:</p><p><a href="${verifyLink}">${verifyLink}</a></p><p>This link will expire in 24 hours.</p>`
+      });
+    } catch (emailError) {
+      console.error("[Resend Email Error]:", emailError);
+      // We don't fail the signup if email fails, but you might want to log it or set a flag
+    }
+
     const token = Createtoken(userCreate._id, email, userCreate.role);
 
     res.cookie("token", token, Createcookie);
 
     return res.status(201).json({
       success: true,
-      message: "Account created successfully",
+      message: "Account created successfully. Please check your email to verify your account.",
       token,
       user: {
         id: userCreate._id.toString(),
@@ -82,12 +115,7 @@ export const signup = async (req, res) => {
         role: userCreate.role,
         verified: userCreate.verified,
         emailVerified: userCreate.emailVerified,
-        accountStatus: userCreate.accountStatus,
-        age: userCreate.age,
-        usage: userCreate.usage,
-        professionalDetails: userCreate.nmcRegistrationNumber ? { nmcRegistrationNumber: userCreate.nmcRegistrationNumber, stateMedicalCouncil: userCreate.stateMedicalCouncil } : undefined,
-        vehicleDetails: userCreate.vehicleNumber ? { vehicleNumber: userCreate.vehicleNumber } : undefined,
-        licenseDetails: userCreate.drugLicenseNumber ? { drugLicenseNumber: userCreate.drugLicenseNumber, gstin: userCreate.gstin } : undefined
+        accountStatus: userCreate.accountStatus
       }
     });
   } catch (error) {
@@ -118,6 +146,13 @@ export const login = async (req, res) => {
       return res.status(401).json({
         success: false,
         message: "Invalid email or password"
+      });
+    }
+
+    if (!existingUser.emailVerified) {
+      return res.status(403).json({
+        success: false,
+        message: "Please verify your email address before logging in."
       });
     }
 
@@ -345,5 +380,95 @@ export const submitVerification = async (req, res) => {
       success: false,
       message: "Error submitting verification details"
     });
+  }
+};
+
+export const verifyEmail = async (req, res) => {
+  try {
+    const { email, token } = req.body;
+    if (!email || !token) {
+      return res.status(400).json({ success: false, message: "Email and token are required" });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: "Invalid verification link" });
+    }
+
+    if (user.emailVerified) {
+      return res.status(200).json({ success: true, message: "Email is already verified" });
+    }
+
+    if (!user.verificationToken || !user.verificationTokenExpiresAt) {
+      return res.status(400).json({ success: false, message: "Invalid verification link" });
+    }
+
+    if (new Date() > new Date(user.verificationTokenExpiresAt)) {
+      return res.status(400).json({ success: false, message: "Verification link has expired" });
+    }
+
+    const isMatch = await bcrypt.compare(token, user.verificationToken);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: "Invalid verification link" });
+    }
+
+    user.emailVerified = true;
+    user.verificationToken = undefined;
+    user.verificationTokenExpiresAt = undefined;
+    await user.save();
+
+    return res.status(200).json({ success: true, message: "Email verified successfully" });
+  } catch (error) {
+    console.error("[Verify Email Error]:", error);
+    return res.status(500).json({ success: false, message: "Internal server error during email verification" });
+  }
+};
+
+export const resendVerificationEmail = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: "User not found" });
+    }
+
+    if (user.emailVerified) {
+      return res.status(400).json({ success: false, message: "Email is already verified" });
+    }
+
+    // Rate limiting: 60 seconds
+    if (user.verificationTokenExpiresAt && (new Date(user.verificationTokenExpiresAt).getTime() - 24 * 60 * 60 * 1000 + 60000 > Date.now())) {
+      return res.status(429).json({ success: false, message: "Please wait 60 seconds before requesting another email." });
+    }
+
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedVerificationToken = await bcrypt.hash(verificationToken, 10);
+    user.verificationToken = hashedVerificationToken;
+    user.verificationTokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await user.save();
+
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const verifyLink = `${FRONTEND_URL}/verify-email?token=${verificationToken}&email=${email}`;
+    
+    const resendClient = getResendClient();
+    await resendClient.emails.send({
+      from: 'Jivexa AI <onboarding@resend.dev>',
+      to: user.email,
+      subject: 'Verify your email for Jivexa AI',
+      html: `<p>Hi ${user.name},</p><p>Please verify your email address by clicking the link below:</p><p><a href="${verifyLink}">${verifyLink}</a></p><p>This link will expire in 24 hours.</p>`
+    });
+
+    return res.status(200).json({ success: true, message: "Verification email sent successfully" });
+  } catch (error) {
+    console.error("[Resend Verification Email Error]:", error);
+    return res.status(500).json({ success: false, message: "Internal server error sending verification email" });
   }
 };
