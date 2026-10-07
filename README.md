@@ -1,6 +1,6 @@
 # Jivexa Health OS
 
-[![Live Demo](https://img.shields.io/badge/Live_App-frontend--beryl--two--18.vercel.app-0070f3?style=for-the-badge&logo=vercel&logoColor=white)](https://jivexa-main.vercel.app/)
+[![Live Demo](https://jivexa-one.vercel.app/)
 [![GitHub](https://img.shields.io/badge/GitHub-jivexa--ai/Jivexa--main-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/jivexa-ai/Jivexa-main)
 
 A connected health platform built to bring patients, doctors, pharmacies, emergency ambulance dispatches, and ABHA health records into one simple place.
