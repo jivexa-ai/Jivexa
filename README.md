@@ -5,8 +5,7 @@
 
 A connected health platform built to bring patients, doctors, pharmacies, emergency ambulance dispatches, and ABHA health records into one simple place.
 
-👉 **Try the Live App:** [https://frontend-beryl-two-18.vercel.app](https://frontend-beryl-two-18.vercel.app)
-
+👉 **Try the Live App:* [https://jivexa-one.vercel.app/](url)
 ---
 
 ## What is Jivexa?
