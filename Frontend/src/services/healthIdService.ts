@@ -61,6 +61,7 @@ export interface HealthIdResponse {
   message?: string;
   healthId?: string;
   patient?: HealthIdPatientProfile;
+  verificationStatus?: string;
   error?: string;
 }
 
@@ -167,6 +168,7 @@ export const searchHealthIdApi = async (
       success: true,
       healthId: result.healthId,
       patient: result.patient,
+      verificationStatus: result.verificationStatus,
     };
   } catch (err: any) {
     console.warn(

@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const HealthId = require('../models/HealthId');
 const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
 const { getSupabase } = require('../config/supabase');
 const { signupSchema, loginSchema, updateProfileSchema } = require('../validators/userValidators');
@@ -17,6 +18,12 @@ const {
 const JWT_SECRET = process.env.JWT_SECRET || 'jivexa_health_jwt_secret_key_2026_super_secure_auth_token_string';
 const MAX_FAILED_LOGINS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000; // 15-minute lockout
+
+// Canonical Health ID generator for JIVEXA Health OS patients
+const generateCanonicalHealthId = () => {
+  const numPart = Math.floor(100000 + Math.random() * 900000);
+  return `JIV-${new Date().getFullYear()}-${numPart}`;
+};
 
 // TEMPORARILY DISABLED FOR LAUNCH
 // Re-enable OTP after launch by setting OTP_ENABLED=true in backend/.env.
@@ -151,6 +158,9 @@ const registerUser = async (req, res) => {
       const salt = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(password, salt);
 
+      // Generate canonical Health ID for patient registration
+      const generatedHealthId = (req.body.healthId || (userRole === 'PATIENT' ? generateCanonicalHealthId() : '')).toUpperCase().trim();
+
       // 3. Save user profile in public.users
       const userProfilePayload = {
         id: authUserId,
@@ -159,7 +169,7 @@ const registerUser = async (req, res) => {
         age: age !== undefined ? age : 28,
         email,
         phone: req.body.phone || req.body.phoneNumber || '',
-        healthId: req.body.healthId || `HID-${Math.floor(100000 + Math.random() * 900000)}`,
+        healthId: generatedHealthId,
         password: hashedPassword,
         role: userRole,
         emailVerified: true,
@@ -193,6 +203,24 @@ const registerUser = async (req, res) => {
       }
 
       const userRecord = await SupabaseDb.users.create(userProfilePayload);
+
+      // Auto-create linked health_ids record for registered patients
+      if (userRole === 'PATIENT' && generatedHealthId) {
+        await SupabaseDb.healthIds.create({
+          healthId: generatedHealthId,
+          userId: userRecord.id,
+          fullName: userRecord.name,
+          email: userRecord.email,
+          phoneNumber: userRecord.phone || '',
+          dateOfBirth: req.body.dateOfBirth || req.body.dob || null,
+          gender: req.body.gender || null,
+          bloodGroup: req.body.bloodGroup || null,
+          emergencyContact: req.body.emergencyContact || null,
+          healthProfile: req.body.healthProfile || null
+        }).catch((err) => {
+          console.warn('[Auth Controller] Supabase healthIds create notice:', err.message);
+        });
+      }
 
       // 4. Generate JWT auth token & set HTTP-only cookie
       const token = generateToken(
@@ -297,13 +325,14 @@ const registerUser = async (req, res) => {
       }
 
       // Create new user in MongoDB
+      const generatedHealthId = (req.body.healthId || (userRole === 'PATIENT' ? generateCanonicalHealthId() : '')).toUpperCase().trim();
       const newUserObj = {
         roleId,
         name,
         age,
         email,
         phone: req.body.phone || req.body.phoneNumber || '',
-        healthId: req.body.healthId || '',
+        healthId: generatedHealthId,
         password,
         role: userRole,
         emailVerified: !isOtpEnabled(),
@@ -346,6 +375,23 @@ const registerUser = async (req, res) => {
       }
 
       const user = await User.create(newUserObj);
+
+      if (userRole === 'PATIENT' && generatedHealthId) {
+        await HealthId.create({
+          healthId: generatedHealthId,
+          userId: user._id,
+          fullName: user.name,
+          email: user.email,
+          phoneNumber: user.phone || '',
+          dateOfBirth: req.body.dateOfBirth || req.body.dob || null,
+          gender: req.body.gender || null,
+          bloodGroup: req.body.bloodGroup || null,
+          emergencyContact: req.body.emergencyContact || null,
+          healthProfile: req.body.healthProfile || null
+        }).catch((err) => {
+          console.warn('[Auth Controller] Mongo HealthId create notice:', err.message);
+        });
+      }
 
       if (isOtpEnabled() && otpEntry) {
         const emailRes = await sendOTPEmail(email, otpEntry.plainOtp, name, userRole);
@@ -420,7 +466,7 @@ const registerUser = async (req, res) => {
       const salt = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(password, salt);
       const newUserId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-
+      const generatedHealthId = (req.body.healthId || (userRole === 'PATIENT' ? generateCanonicalHealthId() : '')).toUpperCase().trim();
       const memUser = {
         _id: newUserId,
         id: newUserId,
@@ -428,6 +474,8 @@ const registerUser = async (req, res) => {
         name,
         age,
         email,
+        phone: req.body.phone || req.body.phoneNumber || '',
+        healthId: generatedHealthId,
         password: hashedPassword,
         role: userRole,
         emailVerified: !isOtpEnabled(),
@@ -451,6 +499,19 @@ const registerUser = async (req, res) => {
       }
 
       inMemoryUsers.push(memUser);
+
+      if (userRole === 'PATIENT' && generatedHealthId) {
+        inMemoryHealthIds.push({
+          healthId: generatedHealthId,
+          userId: newUserId,
+          fullName: memUser.name,
+          email: memUser.email,
+          phoneNumber: memUser.phone || '',
+          dateOfBirth: '2000-01-01',
+          gender: 'Unspecified',
+          bloodGroup: 'O+'
+        });
+      }
 
       if (isOtpEnabled() && otpEntry) {
         const emailRes = await sendOTPEmail(email, otpEntry.plainOtp, name, userRole);

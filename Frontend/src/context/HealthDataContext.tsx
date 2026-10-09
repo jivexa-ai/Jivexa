@@ -467,11 +467,15 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             parsed.updatedAt = parsed.updatedAt || initialTimestamp;
             localStorage.setItem(`jivexa_profile_${userId}`, JSON.stringify(parsed));
           }
+          if (!parsed.jivexaHealthId && (user as any)?.healthId) {
+            parsed.jivexaHealthId = (user as any).healthId;
+          }
           setPatientProfile(parsed);
         } catch (e) {}
       } else {
         const defaultProfile: PatientProfile = {
           userId,
+          jivexaHealthId: (user as any)?.healthId,
           bloodGroup: 'O+ Positive',
           allergies: 'No known allergies',
           conditions: 'None logged',
@@ -943,6 +947,9 @@ export const HealthDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const generateOrGetHealthId = (targetUserId: string): string => {
     if (patientProfile && patientProfile.userId === targetUserId && patientProfile.jivexaHealthId) {
       return patientProfile.jivexaHealthId;
+    }
+    if (user && (user.id === targetUserId || (user as any)._id === targetUserId) && user.healthId) {
+      return user.healthId;
     }
     let hash = 0;
     for (let i = 0; i < targetUserId.length; i++) {

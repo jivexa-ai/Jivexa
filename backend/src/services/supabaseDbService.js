@@ -191,11 +191,11 @@ const mapHealthIdToDb = (data) => {
     health_id: data.healthId ? data.healthId.toUpperCase().trim() : undefined,
     user_id: String(data.userId),
     full_name: data.fullName,
-    dateOf_birth: data.dateOfBirth || '2000-01-01',
-    gender: data.gender || 'Unspecified',
+    date_of_birth: data.dateOfBirth || null,
+    gender: data.gender || null,
     phone_number: data.phoneNumber || '',
     email: data.email ? data.email.toLowerCase().trim() : '',
-    blood_group: data.bloodGroup || 'Not Set',
+    blood_group: data.bloodGroup || null,
     emergency_contact: data.emergencyContact || {},
     address: data.address || '',
     health_profile: data.healthProfile || {}
@@ -509,13 +509,17 @@ const mapAmbulanceRequestFromDb = (row) => {
 const SupabaseDb = {
   // --- USERS ---
   users: {
-    async findOne({ email, id, roleId }) {
+    async findOne({ email, id, roleId, healthId }) {
       const client = getSupabase();
       if (!client) return null;
       let query = client.from('users').select('*');
       if (email) query = query.eq('email', email.toLowerCase().trim());
       if (id) query = query.eq('id', String(id));
       if (roleId) query = query.eq('role_id', String(roleId));
+      if (healthId) {
+        const cleanHid = String(healthId).toUpperCase().trim();
+        query = query.or(`health_id.eq.${cleanHid},health_id.eq.${cleanHid.replace(/[^A-Z0-9]/g, '')}`);
+      }
       const { data, error } = await query.maybeSingle();
       if (error || !data) return null;
       return mapUserFromDb(data);

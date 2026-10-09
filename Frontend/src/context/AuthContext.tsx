@@ -19,6 +19,7 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
+  healthId?: string;
   verified: boolean;
   emailVerified?: boolean;
   accountStatus?: string;
@@ -85,6 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: nodeRes.user.email,
             name: nodeRes.user.name,
             role: nodeRes.user.role || 'PATIENT',
+            healthId: (nodeRes.user as any).healthId || (nodeRes.user as any).health_id,
             verified: Boolean(nodeRes.user.emailVerified || nodeRes.user.verified),
             emailVerified: Boolean(nodeRes.user.emailVerified),
             accountStatus: nodeRes.user.accountStatus || 'ACTIVE',
@@ -156,6 +158,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email: nodeRes.user.email,
           name: nodeRes.user.name,
           role: (nodeRes.user.role || role || 'PATIENT') as UserRole,
+          healthId: (nodeRes.user as any).healthId || (nodeRes.user as any).health_id,
           verified: true,
           emailVerified: true,
           accountStatus: nodeRes.user.accountStatus || 'ACTIVE',
@@ -260,6 +263,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: nodeRes.user.email || sanitizedEmail,
             name: nodeRes.user.name || sanitizedName,
             role: (nodeRes.user.role || role) as UserRole,
+            healthId: (nodeRes.user as any).healthId || (nodeRes.user as any).health_id,
             verified: Boolean(nodeRes.user.verified ?? true),
             emailVerified: Boolean(nodeRes.user.emailVerified ?? true),
             accountStatus: nodeRes.user.accountStatus || 'ACTIVE',

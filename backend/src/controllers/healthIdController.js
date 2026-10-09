@@ -3,15 +3,62 @@ const HealthId = require('../models/HealthId');
 const User = require('../models/User');
 const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
 
-// Helper to generate a random 8-character uppercase alphanumeric string for Health ID
+// Helper to generate a canonical Health ID: JIV-2026-XXXXXX
 const generateRandomId = () => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Avoid ambiguous chars like I, O, 0, 1
-  let result = '';
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return `JXV-${result}`;
+  const numPart = Math.floor(100000 + Math.random() * 900000);
+  return `JIV-${new Date().getFullYear()}-${numPart}`;
 };
+
+// Verified demo sample Health IDs from emergency lookup badge
+const DEMO_HEALTH_IDS = [
+  {
+    healthId: 'JXV-STVAZREW',
+    fullName: 'Aarav Sharma',
+    dateOfBirth: '1992-08-14',
+    gender: 'Male',
+    phoneNumber: '+91 98111 22334',
+    email: 'aarav.sharma@example.com',
+    bloodGroup: 'B+',
+    emergencyContact: {
+      name: 'Sunita Sharma',
+      relationship: 'Spouse',
+      phone: '+91 98111 22335',
+      hospital: 'Apollo Hospital, Bangalore'
+    },
+    address: 'Koramangala, Bangalore',
+    healthProfile: {
+      chronicConditions: ['Hypertension (Managed)'],
+      allergies: ['Penicillin'],
+      currentMedications: ['Amlodipine 5mg']
+    },
+    createdAt: new Date().toISOString()
+  },
+  {
+    healthId: 'PAT-202608-F4A1B',
+    fullName: 'Meera Nair',
+    dateOfBirth: '1998-11-22',
+    gender: 'Female',
+    phoneNumber: '+91 97444 55667',
+    email: 'meera.nair@example.com',
+    bloodGroup: 'O+',
+    emergencyContact: {
+      name: 'Ramesh Nair',
+      relationship: 'Father',
+      phone: '+91 97444 55668',
+      hospital: 'Fortis Healthcare, Bannerghatta'
+    },
+    address: 'Indiranagar, Bangalore',
+    healthProfile: {
+      chronicConditions: ['None Logged'],
+      allergies: ['Sulfa drugs (mild rash)'],
+      currentMedications: []
+    },
+    createdAt: new Date().toISOString()
+  }
+];
+
+// Memory fallback store if local MongoDB daemon is disconnected
+const inMemoryHealthIds = [...DEMO_HEALTH_IDS];
 
 // Server-side unique Health ID generator with MongoDB & Supabase collision prevention
 const generateUniqueHealthId = async () => {
@@ -40,9 +87,6 @@ const generateUniqueHealthId = async () => {
 
   return newHealthId;
 };
-
-// Memory fallback store if local MongoDB daemon is disconnected
-const inMemoryHealthIds = [];
 
 // @desc    Register / Create Digital Health ID for authenticated patient
 // @route   POST /api/health-id
@@ -242,16 +286,25 @@ const getMyHealthId = async (req, res) => {
       // Auto-generate Health ID if patient signed up but hasn't initialized one yet
       if (!record) {
         const userRecord = await SupabaseDb.users.findById(userId);
-        const newHealthIdStr = await generateUniqueHealthId();
+        const existingHid = userRecord?.healthId;
+        const newHealthIdStr = (existingHid && existingHid.startsWith('JIV-'))
+          ? existingHid
+          : await generateUniqueHealthId();
+
         record = await SupabaseDb.healthIds.create({
           healthId: newHealthIdStr,
           userId,
           fullName: userRecord ? userRecord.name : (req.user ? req.user.name : 'Patient User'),
           email: userRecord ? userRecord.email : (req.user ? req.user.email : ''),
-          dateOfBirth: '2000-01-01',
-          gender: 'Unspecified',
-          bloodGroup: 'O+'
+          dateOfBirth: userRecord?.dateOfBirth || userRecord?.dob || null,
+          gender: userRecord?.gender || null,
+          bloodGroup: userRecord?.bloodGroup || null
         });
+
+        if (userRecord && (!userRecord.healthId || userRecord.healthId !== newHealthIdStr)) {
+          userRecord.healthId = newHealthIdStr;
+          await userRecord.save().catch(() => {});
+        }
       }
 
       return res.status(200).json({
@@ -276,16 +329,25 @@ const getMyHealthId = async (req, res) => {
       // Auto-generate Health ID if patient signed up but hasn't initialized one yet
       if (!record && mongoose.Types.ObjectId.isValid(userId)) {
         const userRecord = await User.findById(userId);
-        const newHealthIdStr = await generateUniqueHealthId();
+        const existingHid = userRecord?.healthId;
+        const newHealthIdStr = (existingHid && existingHid.startsWith('JIV-'))
+          ? existingHid
+          : await generateUniqueHealthId();
+
         record = await HealthId.create({
           healthId: newHealthIdStr,
           userId,
           fullName: userRecord ? userRecord.name : (req.user ? req.user.name : 'Patient User'),
           email: userRecord ? userRecord.email : (req.user ? req.user.email : ''),
-          dateOfBirth: '2000-01-01',
-          gender: 'Unspecified',
-          bloodGroup: 'O+'
+          dateOfBirth: userRecord?.dateOfBirth || userRecord?.dob || null,
+          gender: userRecord?.gender || null,
+          bloodGroup: userRecord?.bloodGroup || null
         });
+
+        if (userRecord && (!userRecord.healthId || userRecord.healthId !== newHealthIdStr)) {
+          userRecord.healthId = newHealthIdStr;
+          await userRecord.save().catch(() => {});
+        }
       }
 
       return res.status(200).json({
@@ -340,8 +402,24 @@ const getMyHealthId = async (req, res) => {
   }
 };
 
+// Helper to format patient emergency profile response
+const formatEmergencyPatientResponse = (record) => ({
+  success: true,
+  healthId: record.healthId,
+  verificationStatus: 'Verified Active Record',
+  patient: {
+    name: record.fullName || record.name || null,
+    dateOfBirth: record.dateOfBirth || null,
+    gender: record.gender || null,
+    bloodGroup: record.bloodGroup || null,
+    emergencyContact: record.emergencyContact || null,
+    healthProfile: record.healthProfile || null,
+    createdAt: record.createdAt || null
+  }
+});
+
 // @desc    Search patient Health ID in MongoDB & Supabase
-// @route   GET /api/health-id/search?healthId=JXV-XXXXXXXX
+// @route   GET /api/health-id/search?healthId=JIV-2026-XXXXXX
 // @access  Public / Private (Healthcare Professionals & Verified Users)
 const searchHealthId = async (req, res) => {
   try {
@@ -356,12 +434,53 @@ const searchHealthId = async (req, res) => {
     }
 
     if (isSupabaseConfigured()) {
-      const record = await SupabaseDb.healthIds.findOne({
+      let record = await SupabaseDb.healthIds.findOne({
         $or: [
           { healthId: sanitizedHealthId },
           { healthId: sanitizedHealthId.replace(/[^A-Z0-9]/g, '') }
         ]
       });
+
+      // 1. Fallback: Check if patient user has this health_id in users table
+      if (!record) {
+        const userMatch = await SupabaseDb.users.findOne({ healthId: sanitizedHealthId });
+        if (userMatch) {
+          // Auto-sync into health_ids table
+          record = await SupabaseDb.healthIds.create({
+            healthId: sanitizedHealthId,
+            userId: userMatch.id,
+            fullName: userMatch.name,
+            email: userMatch.email,
+            phoneNumber: userMatch.phone || '',
+            dateOfBirth: userMatch.dateOfBirth || userMatch.dob || null,
+            gender: userMatch.gender || null,
+            bloodGroup: userMatch.bloodGroup || null,
+            emergencyContact: userMatch.emergencyContact || null,
+            healthProfile: userMatch.healthProfile || null
+          }).catch(() => null);
+
+          if (!record) {
+            record = {
+              healthId: sanitizedHealthId,
+              fullName: userMatch.name,
+              dateOfBirth: userMatch.dateOfBirth || userMatch.dob || null,
+              gender: userMatch.gender || null,
+              bloodGroup: userMatch.bloodGroup || null,
+              emergencyContact: userMatch.emergencyContact || null,
+              healthProfile: userMatch.healthProfile || null,
+              createdAt: userMatch.createdAt
+            };
+          }
+        }
+      }
+
+      // 2. Fallback: Check verified demo sample health IDs
+      if (!record) {
+        const demoMatch = DEMO_HEALTH_IDS.find(
+          (d) => d.healthId.toUpperCase() === sanitizedHealthId || d.healthId.toUpperCase().replace(/[^A-Z0-9]/g, '') === sanitizedHealthId.replace(/[^A-Z0-9]/g, '')
+        );
+        if (demoMatch) record = demoMatch;
+      }
 
       if (!record) {
         return res.status(404).json({
@@ -370,29 +489,59 @@ const searchHealthId = async (req, res) => {
         });
       }
 
-      return res.status(200).json({
-        success: true,
-        healthId: record.healthId,
-        patient: {
-          name: record.fullName,
-          dateOfBirth: record.dateOfBirth,
-          gender: record.gender,
-          bloodGroup: record.bloodGroup,
-          email: record.email,
-          phoneNumber: record.phoneNumber,
-          emergencyContact: record.emergencyContact,
-          address: record.address,
-          healthProfile: record.healthProfile,
-          createdAt: record.createdAt
-        }
-      });
+      return res.status(200).json(formatEmergencyPatientResponse(record));
     } else if (mongoose.connection.readyState === 1) {
-      const record = await HealthId.findOne({
+      let record = await HealthId.findOne({
         $or: [
           { healthId: sanitizedHealthId },
           { healthId: sanitizedHealthId.replace(/[^A-Z0-9]/g, '') }
         ]
       });
+
+      // 1. Fallback: Check if patient user has this healthId in User collection
+      if (!record) {
+        const userMatch = await User.findOne({
+          $or: [
+            { healthId: sanitizedHealthId },
+            { healthId: sanitizedHealthId.replace(/[^A-Z0-9]/g, '') }
+          ]
+        });
+        if (userMatch) {
+          record = await HealthId.create({
+            healthId: sanitizedHealthId,
+            userId: userMatch._id,
+            fullName: userMatch.name,
+            email: userMatch.email,
+            phoneNumber: userMatch.phone || '',
+            dateOfBirth: userMatch.dateOfBirth || userMatch.dob || null,
+            gender: userMatch.gender || null,
+            bloodGroup: userMatch.bloodGroup || null,
+            emergencyContact: userMatch.emergencyContact || null,
+            healthProfile: userMatch.healthProfile || null
+          }).catch(() => null);
+
+          if (!record) {
+            record = {
+              healthId: sanitizedHealthId,
+              fullName: userMatch.name,
+              dateOfBirth: userMatch.dateOfBirth || userMatch.dob || null,
+              gender: userMatch.gender || null,
+              bloodGroup: userMatch.bloodGroup || null,
+              emergencyContact: userMatch.emergencyContact || null,
+              healthProfile: userMatch.healthProfile || null,
+              createdAt: userMatch.createdAt
+            };
+          }
+        }
+      }
+
+      // 2. Fallback: Check verified demo sample health IDs
+      if (!record) {
+        const demoMatch = DEMO_HEALTH_IDS.find(
+          (d) => d.healthId.toUpperCase() === sanitizedHealthId || d.healthId.toUpperCase().replace(/[^A-Z0-9]/g, '') === sanitizedHealthId.replace(/[^A-Z0-9]/g, '')
+        );
+        if (demoMatch) record = demoMatch;
+      }
 
       if (!record) {
         return res.status(404).json({
@@ -401,27 +550,31 @@ const searchHealthId = async (req, res) => {
         });
       }
 
-      return res.status(200).json({
-        success: true,
-        healthId: record.healthId,
-        patient: {
-          name: record.fullName,
-          dateOfBirth: record.dateOfBirth,
-          gender: record.gender,
-          bloodGroup: record.bloodGroup,
-          email: record.email,
-          phoneNumber: record.phoneNumber,
-          emergencyContact: record.emergencyContact,
-          address: record.address,
-          healthProfile: record.healthProfile,
-          createdAt: record.createdAt
-        }
-      });
+      return res.status(200).json(formatEmergencyPatientResponse(record));
     } else {
-      const record = inMemoryHealthIds.find(
+      let record = inMemoryHealthIds.find(
         (h) => h.healthId.toUpperCase() === sanitizedHealthId || h.healthId.toUpperCase().replace(/[^A-Z0-9]/g, '') === sanitizedHealthId.replace(/[^A-Z0-9]/g, '')
       );
 
+      if (!record && typeof inMemoryUsers !== 'undefined') {
+        const userMatch = inMemoryUsers.find(
+          (u) => u.healthId && (u.healthId.toUpperCase() === sanitizedHealthId || u.healthId.toUpperCase().replace(/[^A-Z0-9]/g, '') === sanitizedHealthId.replace(/[^A-Z0-9]/g, ''))
+        );
+        if (userMatch) {
+          record = {
+            healthId: sanitizedHealthId,
+            fullName: userMatch.name,
+            dateOfBirth: userMatch.dateOfBirth || userMatch.dob || null,
+            gender: userMatch.gender || null,
+            bloodGroup: userMatch.bloodGroup || null,
+            emergencyContact: userMatch.emergencyContact || null,
+            healthProfile: userMatch.healthProfile || null,
+            createdAt: new Date().toISOString()
+          };
+          inMemoryHealthIds.push(record);
+        }
+      }
+
       if (!record) {
         return res.status(404).json({
           success: false,
@@ -429,21 +582,7 @@ const searchHealthId = async (req, res) => {
         });
       }
 
-      return res.status(200).json({
-        success: true,
-        healthId: record.healthId,
-        patient: {
-          name: record.fullName,
-          dateOfBirth: record.dateOfBirth,
-          gender: record.gender,
-          bloodGroup: record.bloodGroup,
-          email: record.email,
-          phoneNumber: record.phoneNumber,
-          emergencyContact: record.emergencyContact,
-          address: record.address,
-          healthProfile: record.healthProfile
-        }
-      });
+      return res.status(200).json(formatEmergencyPatientResponse(record));
     }
   } catch (error) {
     console.error('[Health ID API] Search Error:', error);
