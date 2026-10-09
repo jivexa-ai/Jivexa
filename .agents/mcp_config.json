@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mongodb": {
+      "command": "node",
+      "args": ["backend/scripts/mongo-mcp-server.js"],
+      "env": {}
+    }
+  }
+}
