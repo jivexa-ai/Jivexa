@@ -56,9 +56,18 @@ const safeFetchJson = async (url: string, options: RequestInit): Promise<{ ok: b
       const data = await res.json();
       return { ok: res.ok, status: res.status, data };
     }
-    return { ok: false, status: res.status, data: { error: `Endpoint returned non-JSON format (${res.status})` } };
+    const textData = await res.text().catch(() => '');
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(textData);
+    } catch {}
+    if (parsed && typeof parsed === 'object') {
+      return { ok: res.ok, status: res.status, data: parsed };
+    }
+    const cleanError = textData && textData.length < 300 ? textData : `Server responded with HTTP ${res.status}`;
+    return { ok: false, status: res.status, data: { error: cleanError } };
   } catch (e: any) {
-    return { ok: false, status: 0, data: { error: e.message || 'Network connection error' } };
+    return { ok: false, status: 0, data: { error: e.message || 'Network connection failed' } };
   }
 };
 
@@ -124,7 +133,7 @@ export const nodeAuthSignup = async (
 
     if (!res.ok) {
       const errMsg = res.data?.message || res.data?.error || 'Registration failed on server.';
-      if (res.status === 0 || errMsg.toLowerCase().includes('failed to fetch') || errMsg.toLowerCase().includes('network') || errMsg.toLowerCase().includes('non-json')) {
+      if (res.status === 0 || errMsg.toLowerCase().includes('failed to fetch')) {
         return {
           success: false,
           error: `Could not connect to authentication server (${backendUrl}). Network connection failed.`
@@ -184,7 +193,7 @@ export const nodeAuthLogin = async (
 
     if (!res.ok) {
       const errMsg = res.data?.message || res.data?.error || 'Invalid credentials.';
-      if (res.status === 0 || errMsg.toLowerCase().includes('failed to fetch') || errMsg.toLowerCase().includes('network') || errMsg.toLowerCase().includes('non-json')) {
+      if (res.status === 0 || errMsg.toLowerCase().includes('failed to fetch')) {
         return {
           success: false,
           error: `Could not connect to authentication server (${backendUrl}). Network connection failed.`

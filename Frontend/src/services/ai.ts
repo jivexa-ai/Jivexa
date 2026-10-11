@@ -514,8 +514,10 @@ export const streamAIHealthAssistant = async (
         ...(token ? { 'Authorization': `Bearer ${token}` } : {})
       },
       body: JSON.stringify({
-        message: query,
-        history: history.map((h) => ({ sender: h.sender, text: h.text })),
+        message: query.trim(),
+        history: (history || [])
+          .filter(h => typeof h?.text === 'string' && h.text.trim().length > 0)
+          .map((h) => ({ sender: h.sender, text: h.text.trim() })),
         userId
       })
     });

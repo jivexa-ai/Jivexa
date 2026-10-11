@@ -1,10 +1,10 @@
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'test_backend_jwt_secret_key_12345678901234567890';
+
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const authRoutes = require('./src/routes/authRoutes');
-
-process.env.NODE_ENV = 'test';
-process.env.JWT_SECRET = 'test_backend_jwt_secret_key_12345678901234567890';
 
 const runTests = async () => {
   console.log('\n======================================================');
@@ -107,6 +107,7 @@ const runTests = async () => {
         })
       });
       const body = await res.json();
+      if (body.token) userToken = body.token;
       const pass = res.status === 200 && body.success === true && Boolean(body.token) && body.user?.email === testUser.email;
       console.log(`[TEST 4] Login -> Status: ${res.status} | Token: ${body.token ? 'Issued' : 'Missing'} | Pass: ${pass}`);
       testResults.push({ name: 'Valid Login', pass, status: res.status });

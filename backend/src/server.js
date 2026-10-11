@@ -1,8 +1,3 @@
-const dns = require('dns');
-try {
-  dns.setServers(['8.8.8.8', '1.1.1.1']);
-} catch (e) {}
-
 const dotenv = require('dotenv');
 dotenv.config();
 
@@ -17,16 +12,27 @@ const mongoose = require('mongoose');
 const app = express();
 
 // Configure CORS for Cookie & Authorization header transmission across any deployed origin
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      callback(null, true);
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With']
-  })
-);
+const corsOptions = {
+  origin: (origin, callback) => {
+    callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Cookie',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Accept-Language',
+    'Range'
+  ],
+  exposedHeaders: ['Set-Cookie']
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -116,7 +122,8 @@ process.on('uncaughtException', (err) => {
   console.error('[Process] Handled uncaught exception safely:', err.message);
 });
 
-const PORT = process.env.PORT || 4000;
+const PORT = parseInt(process.env.PORT, 10) || 4000;
+const HOST = process.env.HOST || '0.0.0.0';
 
 const startServer = async () => {
   try {
@@ -149,12 +156,12 @@ const startServer = async () => {
       console.warn('[MongoDB] Background connection error (non-fatal):', err.message);
     });
 
-    // 3. Start Express server and attach error listeners
-    const server = app.listen(PORT, () => {
+    // 3. Start Express server and attach error listeners explicitly on 0.0.0.0
+    const server = app.listen(PORT, HOST, () => {
       console.log(
         `[JIVEXA Backend] Production-Grade Auth Server running in ${
           process.env.NODE_ENV || 'development'
-        } mode on http://localhost:${PORT}`
+        } mode on http://localhost:${PORT} (bound to ${HOST}:${PORT})`
       );
     });
 

@@ -22,26 +22,22 @@ export const Button: React.FC<ButtonProps> = ({
   const getVariantStyles = (): React.CSSProperties => {
     switch (variant) {
       case 'secondary':
-        return {
-          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-          color: 'white',
-          border: 'none',
-          boxShadow: '0 4px 14px -2px rgba(16, 185, 129, 0.35)',
-        };
       case 'outline':
         return {
           backgroundColor: 'transparent',
           color: 'var(--primary)',
           border: '1.5px solid rgba(2, 132, 199, 0.4)',
+          boxShadow: 'none',
         };
       case 'ghost':
       case 'text':
         return {
           backgroundColor: 'transparent',
           color: 'var(--primary)',
-          border: 'none',
-          padding: '0 4px',
+          border: '1px solid transparent',
+          padding: '0 8px',
           height: 'auto',
+          minHeight: '36px',
           boxShadow: 'none',
         };
       case 'danger':

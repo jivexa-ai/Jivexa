@@ -33,12 +33,13 @@ const isOtpEnabled = () => {
 
 // Helper to generate signed JWT token
 const generateToken = (id, email, role, name, roleId) => {
-  if (!JWT_SECRET) {
+  const secretKey = process.env.JWT_SECRET || JWT_SECRET;
+  if (!secretKey) {
     throw new Error('JWT secret key is not configured in backend environment');
   }
   return jwt.sign(
     { id, email, role, name, roleId },
-    JWT_SECRET,
+    secretKey,
     { expiresIn: '7d' }
   );
 };
@@ -53,6 +54,7 @@ const getCookieOptions = () => ({
 
 // Memory fallback store if local MongoDB connection is disconnected
 const inMemoryUsers = [];
+const inMemoryHealthIds = [];
 
 // @desc    Register a new user (Signup & Dispatch Email OTP)
 // @route   POST /api/auth/signup
@@ -405,10 +407,21 @@ const registerUser = async (req, res) => {
         });
       }
 
+      const token = generateToken(
+        user._id || user.id,
+        user.email,
+        user.role,
+        user.name,
+        user.roleId
+      );
+
+      res.cookie('token', token, getCookieOptions());
+
       return res.status(201).json({
         success: true,
         requireOtp: false,
         requireEmailConfirmation: false,
+        token,
         email: user.email,
         message: 'Account registered successfully.',
         user: user.toAuthJSON ? user.toAuthJSON() : user
@@ -525,10 +538,21 @@ const registerUser = async (req, res) => {
         });
       }
 
+      const token = generateToken(
+        memUser._id || memUser.id,
+        memUser.email,
+        memUser.role,
+        memUser.name,
+        memUser.roleId
+      );
+
+      res.cookie('token', token, getCookieOptions());
+
       return res.status(201).json({
         success: true,
         requireOtp: false,
         requireEmailConfirmation: false,
+        token,
         email: memUser.email,
         message: 'Account created successfully.',
         user: memUser

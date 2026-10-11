@@ -10,6 +10,7 @@ export interface CardProps {
   style?: React.CSSProperties;
   bodyStyle?: React.CSSProperties;
   hoverable?: boolean;
+  headingLevel?: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'div';
 }
 
 export const Card: React.FC<CardProps> = ({
@@ -22,7 +23,10 @@ export const Card: React.FC<CardProps> = ({
   style,
   bodyStyle,
   hoverable = false,
+  headingLevel = 'h3',
 }) => {
+  const HeadingTag = headingLevel;
+
   return (
     <div
       className={`card ${hoverable ? 'card-hover' : ''} ${className}`}
@@ -38,7 +42,11 @@ export const Card: React.FC<CardProps> = ({
     >
       {(title || headerAction) && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: subtitle ? '4px' : '16px' }}>
-          {title && <h3 style={{ fontSize: '1.12rem', fontWeight: 800, color: 'var(--text-main)', margin: 0, letterSpacing: '-0.02em' }}>{title}</h3>}
+          {title && (
+            <HeadingTag style={{ fontSize: 'var(--font-size-md, 1.125rem)', fontWeight: 800, color: 'var(--text-main)', margin: 0, letterSpacing: '-0.02em' }}>
+              {title}
+            </HeadingTag>
+          )}
           {headerAction && <div>{headerAction}</div>}
         </div>
       )}

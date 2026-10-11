@@ -67,6 +67,15 @@
   --shadow-xl: 0 20px 40px -10px rgba(15, 23, 42, 0.1), 0 8px 16px -6px rgba(15, 23, 42, 0.04);
   --shadow-inner: inset 0 2px 4px 0 rgba(0, 0, 0, 0.03);
 
+  /* Consolidated Typography Scale (Shared Type Scale - 7 distinct sizes) */
+  --font-size-xs: 0.75rem;       /* 12px - Badges, micro-labels, tags */
+  --font-size-sm: 0.875rem;      /* 14px - Helper text, captions, secondary body */
+  --font-size-base: 1rem;        /* 16px - Base body text, inputs */
+  --font-size-md: 1.125rem;      /* 18px - Subheadings, card section titles */
+  --font-size-lg: 1.25rem;       /* 20px - Prominent titles */
+  --font-size-xl: 1.5rem;        /* 24px - Page section headers / h1 */
+  --font-size-2xl: 1.875rem;     /* 30px - Large display headings, hero badges */
+
   /* Fonts */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Outfit', sans-serif;
   

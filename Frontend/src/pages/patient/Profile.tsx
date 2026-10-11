@@ -181,7 +181,7 @@ export const PatientProfileEdit: React.FC = () => {
       {/* BRAND HEADER BANNER */}
       <div style={{
         background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #10b981 100%)',
-        borderRadius: '24px',
+        borderRadius: 'var(--radius-xl)',
         padding: '32px 36px',
         color: 'white',
         boxShadow: '0 12px 30px -8px rgba(15, 118, 110, 0.4)',
@@ -199,13 +199,13 @@ export const PatientProfileEdit: React.FC = () => {
               style={{
                 width: '76px',
                 height: '76px',
-                borderRadius: '50%',
+                borderRadius: 'var(--radius-full)',
                 backgroundColor: 'rgba(255, 255, 255, 0.2)',
                 border: '3px solid rgba(255, 255, 255, 0.6)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '1.9rem',
+                fontSize: 'var(--font-size-2xl)',
                 fontWeight: 900,
                 color: 'white',
                 backdropFilter: 'blur(10px)',
@@ -224,7 +224,7 @@ export const PatientProfileEdit: React.FC = () => {
                     width: '100%',
                     height: '100%',
                     objectFit: 'cover',
-                    borderRadius: '50%'
+                    borderRadius: 'var(--radius-full)'
                   }}
                   onError={() => {
                     setPhotoPreview(null);
@@ -243,7 +243,7 @@ export const PatientProfileEdit: React.FC = () => {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  borderRadius: '50%',
+                  borderRadius: 'var(--radius-full)',
                   color: 'white'
                 }}>
                   <Loader2 size={24} className="animate-spin" />
@@ -265,7 +265,7 @@ export const PatientProfileEdit: React.FC = () => {
                 right: '-2px',
                 width: '28px',
                 height: '28px',
-                borderRadius: '50%',
+                borderRadius: 'var(--radius-full)',
                 backgroundColor: '#ffffff',
                 color: '#0f766e',
                 border: '2px solid rgba(255, 255, 255, 0.9)',
@@ -293,10 +293,10 @@ export const PatientProfileEdit: React.FC = () => {
 
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h1 style={{ fontSize: '1.6rem', fontWeight: 800, color: 'white' }}>{form.name || 'Patient Profile'}</h1>
-              <span style={{ backgroundColor: 'rgba(255, 255, 255, 0.25)', fontSize: '0.72rem', fontWeight: 700, padding: '2px 10px', borderRadius: '12px', color: 'white' }}>Verified Patient</span>
+              <h1 style={{ fontSize: 'var(--font-size-xl)', fontWeight: 800, color: 'white' }}>{form.name || 'Patient Profile'}</h1>
+              <span style={{ backgroundColor: 'rgba(255, 255, 255, 0.25)', fontSize: 'var(--font-size-xs)', fontWeight: 700, padding: '2px 10px', borderRadius: 'var(--radius-md)', color: 'white' }}>Verified Patient</span>
             </div>
-            <p style={{ opacity: 0.9, fontSize: '0.88rem', marginTop: '4px' }}>
+            <p style={{ opacity: 0.9, fontSize: 'var(--font-size-sm)', marginTop: '4px' }}>
               JIVEXA Patient ID: JVX-889420 • Connected to Secure Health Ecosystem
             </p>
             {/* Quick action buttons for photo */}
@@ -309,7 +309,7 @@ export const PatientProfileEdit: React.FC = () => {
                     background: 'none',
                     border: 'none',
                     color: 'rgba(255, 255, 255, 0.95)',
-                    fontSize: '0.75rem',
+                    fontSize: 'var(--font-size-xs)',
                     fontWeight: 700,
                     cursor: 'pointer',
                     textDecoration: 'underline',
@@ -318,7 +318,7 @@ export const PatientProfileEdit: React.FC = () => {
                 >
                   Change Photo
                 </button>
-                <span style={{ opacity: 0.5, fontSize: '0.75rem' }}>•</span>
+                <span style={{ opacity: 0.5, fontSize: 'var(--font-size-xs)' }}>•</span>
                 <button
                   type="button"
                   onClick={handlePhotoRemove}
@@ -327,7 +327,7 @@ export const PatientProfileEdit: React.FC = () => {
                     background: 'none',
                     border: 'none',
                     color: 'rgba(255, 255, 255, 0.85)',
-                    fontSize: '0.75rem',
+                    fontSize: 'var(--font-size-xs)',
                     fontWeight: 700,
                     cursor: 'pointer',
                     textDecoration: 'underline',
@@ -346,14 +346,14 @@ export const PatientProfileEdit: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', gap: '12px' }}>
-          <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.15)', padding: '10px 16px', borderRadius: '16px', backdropFilter: 'blur(8px)', textAlign: 'center' }}>
-            <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', opacity: 0.8, fontWeight: 700 }}>Blood Group</span>
-            <div style={{ fontSize: '1rem', fontWeight: 800 }}>{form.bloodGroup.split(' ')[0]}</div>
+          <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.15)', padding: '10px 16px', borderRadius: 'var(--radius-md)', backdropFilter: 'blur(8px)', textAlign: 'center' }}>
+            <span style={{ fontSize: 'var(--font-size-xs)', textTransform: 'uppercase', opacity: 0.8, fontWeight: 700 }}>Blood Group</span>
+            <div style={{ fontSize: 'var(--font-size-base)', fontWeight: 800 }}>{form.bloodGroup.split(' ')[0]}</div>
           </div>
 
-          <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.15)', padding: '10px 16px', borderRadius: '16px', backdropFilter: 'blur(8px)', textAlign: 'center' }}>
-            <span style={{ fontSize: '0.68rem', textTransform: 'uppercase', opacity: 0.8, fontWeight: 700 }}>Calculated BMI</span>
-            <div style={{ fontSize: '1rem', fontWeight: 800 }}>{bmiVal}</div>
+          <div style={{ backgroundColor: 'rgba(255, 255, 255, 0.15)', padding: '10px 16px', borderRadius: 'var(--radius-md)', backdropFilter: 'blur(8px)', textAlign: 'center' }}>
+            <span style={{ fontSize: 'var(--font-size-xs)', textTransform: 'uppercase', opacity: 0.8, fontWeight: 700 }}>Calculated BMI</span>
+            <div style={{ fontSize: 'var(--font-size-base)', fontWeight: 800 }}>{bmiVal}</div>
           </div>
         </div>
       </div>
@@ -361,14 +361,23 @@ export const PatientProfileEdit: React.FC = () => {
       <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
         
         {error && (
-          <div style={{ backgroundColor: 'var(--error-light)', border: '1.5px solid var(--error)', padding: '14px 18px', borderRadius: '16px', color: 'var(--error)', fontSize: '0.88rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ backgroundColor: 'var(--error-light)', border: '1.5px solid var(--error)', padding: '14px 18px', borderRadius: 'var(--radius-md)', color: 'var(--error)', fontSize: 'var(--font-size-sm)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '10px' }}>
             <AlertCircle size={20} />
             <span>{error}</span>
           </div>
         )}
 
         {/* 1. PERSONAL INFORMATION CARD */}
-        <Card style={{ borderRadius: '24px', padding: '28px' }} title={<div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--primary)' }}><User size={22} /><span style={{ fontWeight: 800, fontSize: '1.15rem', color: 'var(--text-dark)' }}>Personal Information</span></div>}>
+        <Card
+          headingLevel="h2"
+          style={{ borderRadius: 'var(--radius-xl)', padding: '28px' }}
+          title={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', color: 'var(--primary)' }}>
+              <User size={22} />
+              <span style={{ fontWeight: 800, fontSize: 'var(--font-size-md)', color: 'var(--text-dark)' }}>Personal Information</span>
+            </span>
+          }
+        >
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }} className="grid-2-mobile">
             <Input 
               label="Full Name *" 
@@ -402,7 +411,7 @@ export const PatientProfileEdit: React.FC = () => {
               disabled
               helperText="Email changes require security verification."
             />
-            <Input
+            <Input 
               label="Preferred Clinic / Hospital"
               value={form.primaryDoctor}
               onChange={(e) => setForm({ ...form, primaryDoctor: e.target.value })}
@@ -411,7 +420,16 @@ export const PatientProfileEdit: React.FC = () => {
         </Card>
 
         {/* 2. VITALS & BIOMETRICS CARD */}
-        <Card style={{ borderRadius: '24px', padding: '28px' }} title={<div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--primary)' }}><Scale size={22} /><span style={{ fontWeight: 800, fontSize: '1.15rem', color: 'var(--text-dark)' }}>Vitals & Biometrics</span></div>}>
+        <Card
+          headingLevel="h2"
+          style={{ borderRadius: 'var(--radius-xl)', padding: '28px' }}
+          title={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', color: 'var(--primary)' }}>
+              <Scale size={22} />
+              <span style={{ fontWeight: 800, fontSize: 'var(--font-size-md)', color: 'var(--text-dark)' }}>Vitals & Biometrics</span>
+            </span>
+          }
+        >
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }} className="grid-2-mobile">
             <Input 
               label="Height (cm)" 
@@ -426,10 +444,10 @@ export const PatientProfileEdit: React.FC = () => {
               onChange={(e) => setForm({ ...form, weight: e.target.value })}
             />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-dark)' }}>Body Mass Index (BMI)</label>
-              <div style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '10px 14px', backgroundColor: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '1.1rem', fontWeight: 900, color: 'var(--text-dark)' }}>{bmiVal}</span>
-                <span style={{ backgroundColor: bmiBadgeColor, color: 'white', fontSize: '0.72rem', fontWeight: 800, padding: '3px 10px', borderRadius: '12px' }}>
+              <label style={{ fontSize: 'var(--font-size-sm)', fontWeight: 700, color: 'var(--text-dark)' }}>Body Mass Index (BMI)</label>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '10px 14px', backgroundColor: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 'var(--font-size-md)', fontWeight: 900, color: 'var(--text-dark)' }}>{bmiVal}</span>
+                <span style={{ backgroundColor: bmiBadgeColor, color: 'white', fontSize: 'var(--font-size-xs)', fontWeight: 800, padding: '3px 10px', borderRadius: 'var(--radius-md)' }}>
                   {bmiCategory}
                 </span>
               </div>
@@ -438,7 +456,16 @@ export const PatientProfileEdit: React.FC = () => {
         </Card>
 
         {/* 3. HEALTH & CLINICAL INFORMATION CARD */}
-        <Card style={{ borderRadius: '24px', padding: '28px' }} title={<div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--primary)' }}><Heart size={22} /><span style={{ fontWeight: 800, fontSize: '1.15rem', color: 'var(--text-dark)' }}>Clinical Health Profile</span></div>}>
+        <Card
+          headingLevel="h2"
+          style={{ borderRadius: 'var(--radius-xl)', padding: '28px' }}
+          title={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', color: 'var(--primary)' }}>
+              <Heart size={22} />
+              <span style={{ fontWeight: 800, fontSize: 'var(--font-size-md)', color: 'var(--text-dark)' }}>Clinical Health Profile</span>
+            </span>
+          }
+        >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }} className="grid-2-mobile">
               <Select 
@@ -474,7 +501,16 @@ export const PatientProfileEdit: React.FC = () => {
         </Card>
 
         {/* 4. EMERGENCY CONTACT & INSURANCE CARD */}
-        <Card style={{ borderRadius: '24px', padding: '28px' }} title={<div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--primary)' }}><Phone size={22} /><span style={{ fontWeight: 800, fontSize: '1.15rem', color: 'var(--text-dark)' }}>Emergency Contacts & Health Insurance</span></div>}>
+        <Card
+          headingLevel="h2"
+          style={{ borderRadius: 'var(--radius-xl)', padding: '28px' }}
+          title={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', color: 'var(--primary)' }}>
+              <Phone size={22} />
+              <span style={{ fontWeight: 800, fontSize: 'var(--font-size-md)', color: 'var(--text-dark)' }}>Emergency Contacts & Health Insurance</span>
+            </span>
+          }
+        >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }} className="grid-2-mobile">
               <Input 
@@ -516,10 +552,10 @@ export const PatientProfileEdit: React.FC = () => {
 
         {/* ACTION BUTTONS */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '16px', marginTop: '8px' }}>
-          <Button type="button" variant="outline" onClick={() => window.history.back()} style={{ borderRadius: '12px', padding: '12px 24px', fontWeight: 700 }}>
+          <Button type="button" variant="secondary" onClick={() => window.history.back()} style={{ borderRadius: 'var(--radius-md)', padding: '12px 24px', fontWeight: 700 }}>
             Cancel
           </Button>
-          <Button type="submit" isLoading={isSaving} style={{ borderRadius: '12px', padding: '12px 32px', fontWeight: 800, backgroundColor: 'var(--primary)', boxShadow: '0 4px 14px rgba(15, 118, 110, 0.3)' }}>
+          <Button type="submit" variant="primary" isLoading={isSaving} style={{ borderRadius: 'var(--radius-md)', padding: '12px 32px', fontWeight: 800 }}>
             Save Profile Updates
           </Button>
         </div>
@@ -529,28 +565,29 @@ export const PatientProfileEdit: React.FC = () => {
       {/* DEVELOPMENT/TESTING ONLY: DATA STORAGE INFO */}
       {isDev && (
         <Card
+          headingLevel="h2"
           style={{
-            borderRadius: '24px',
+            borderRadius: 'var(--radius-xl)',
             padding: '24px 28px',
             backgroundColor: '#f8fafc',
             border: '1.5px dashed #cbd5e1'
           }}
           title={
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#0f766e' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', color: '#0f766e' }}>
                 <Database size={20} />
-                <span style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--text-dark)' }}>
+                <span style={{ fontWeight: 800, fontSize: 'var(--font-size-md)', color: 'var(--text-dark)' }}>
                   Data Storage Info
                 </span>
-              </div>
+              </span>
               <span
                 style={{
                   backgroundColor: '#e0f2fe',
                   color: '#0369a1',
-                  fontSize: '0.68rem',
+                  fontSize: 'var(--font-size-xs)',
                   fontWeight: 800,
                   padding: '3px 10px',
-                  borderRadius: '10px',
+                  borderRadius: 'var(--radius-sm)',
                   letterSpacing: '0.5px',
                   textTransform: 'uppercase'
                 }}
@@ -560,62 +597,62 @@ export const PatientProfileEdit: React.FC = () => {
             </div>
           }
         >
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 28px', fontSize: '0.85rem' }} className="grid-2-mobile">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 28px', fontSize: 'var(--font-size-sm)' }} className="grid-2-mobile">
             <div>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Database
               </span>
-              <strong style={{ color: 'var(--text-dark)', fontSize: '0.92rem' }}>Supabase PostgreSQL</strong>
+              <strong style={{ color: 'var(--text-dark)', fontSize: 'var(--font-size-sm)' }}>Supabase PostgreSQL</strong>
             </div>
 
             <div>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Profile Table
               </span>
-              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: '6px', fontSize: '0.82rem', color: '#0f172a', fontWeight: 700 }}>
+              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', color: '#0f172a', fontWeight: 700 }}>
                 public.users
               </code>
             </div>
 
             <div>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                Authenticated User ID
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)' }}>
+                Authenticated user ID
               </span>
-              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: '6px', fontSize: '0.82rem', color: '#0f172a', fontWeight: 700 }}>
+              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', color: '#0f172a', fontWeight: 700 }}>
                 {user?.id ? (user.id.length > 12 ? `${user.id.substring(0, 8)}••••${user.id.substring(user.id.length - 4)}` : user.id) : 'Not authenticated'}
               </code>
             </div>
 
             <div>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Photo Storage
               </span>
-              <strong style={{ color: 'var(--text-dark)', fontSize: '0.92rem' }}>Supabase Storage</strong>
+              <strong style={{ color: 'var(--text-dark)', fontSize: 'var(--font-size-sm)' }}>Supabase Storage</strong>
             </div>
 
             <div>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Storage Bucket
               </span>
-              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: '6px', fontSize: '0.82rem', color: '#0f172a', fontWeight: 700 }}>
+              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', color: '#0f172a', fontWeight: 700 }}>
                 profile-photos
               </code>
             </div>
 
             <div>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Photo Field
               </span>
-              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: '6px', fontSize: '0.82rem', color: '#0f172a', fontWeight: 700 }}>
+              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', color: '#0f172a', fontWeight: 700 }}>
                 users.professional_details.avatarUrl
               </code>
             </div>
 
             <div style={{ gridColumn: 'span 2' }}>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Storage Path
               </span>
-              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: '6px', fontSize: '0.82rem', color: '#0f172a', fontWeight: 700, wordBreak: 'break-all' }}>
+              <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', color: '#0f172a', fontWeight: 700, wordBreak: 'break-all' }}>
                 {(() => {
                   if (currentAvatarUrl) {
                     const cleanUrl = currentAvatarUrl.split('?')[0];
@@ -629,7 +666,7 @@ export const PatientProfileEdit: React.FC = () => {
             </div>
 
             <div>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Save Status
               </span>
               <span
@@ -638,7 +675,7 @@ export const PatientProfileEdit: React.FC = () => {
                   alignItems: 'center',
                   gap: '6px',
                   fontWeight: 800,
-                  fontSize: '0.85rem',
+                  fontSize: 'var(--font-size-sm)',
                   color: (isSaving || isUploadingPhoto) ? '#0284c7' : error ? '#dc2626' : '#16a34a'
                 }}
               >
@@ -646,7 +683,7 @@ export const PatientProfileEdit: React.FC = () => {
                   style={{
                     width: '8px',
                     height: '8px',
-                    borderRadius: '50%',
+                    borderRadius: 'var(--radius-full)',
                     backgroundColor: (isSaving || isUploadingPhoto) ? '#0284c7' : error ? '#dc2626' : '#16a34a'
                   }}
                 />
@@ -655,10 +692,10 @@ export const PatientProfileEdit: React.FC = () => {
             </div>
 
             <div>
-              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+              <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Last Saved
               </span>
-              <strong style={{ color: 'var(--text-dark)', fontSize: '0.88rem' }}>
+              <strong style={{ color: 'var(--text-dark)', fontSize: 'var(--font-size-sm)' }}>
                 {lastSavedAt
                   ? new Date(lastSavedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })
                   : (user?.updatedAt
@@ -671,9 +708,9 @@ export const PatientProfileEdit: React.FC = () => {
       )}
 
       {/* HIPAA COMPLIANCE FOOTER */}
-      <div style={{ display: 'flex', gap: '14px', alignItems: 'center', backgroundColor: '#f0fdfa', padding: '18px 24px', borderRadius: '20px', border: '1px solid rgba(15, 118, 110, 0.2)' }}>
+      <div style={{ display: 'flex', gap: '14px', alignItems: 'center', backgroundColor: '#f0fdfa', padding: '18px 24px', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(15, 118, 110, 0.2)' }}>
         <ShieldCheck size={24} style={{ color: 'var(--primary)', flexShrink: 0 }} />
-        <span style={{ fontSize: '0.82rem', color: 'var(--text-main)', lineHeight: '1.5' }}>
+        <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-main)', lineHeight: '1.5' }}>
           <strong>JIVEXA HIPAA & Encrypted Privacy Standard:</strong> Your personal medical records and emergency logs are encrypted with 256-bit AES protection. Information is strictly shared with authorized healthcare practitioners during emergency consults.
         </span>
       </div>

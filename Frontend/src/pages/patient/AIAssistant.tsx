@@ -68,7 +68,9 @@ export const AIAssistantChat: React.FC = () => {
         const formatted = parsed.map((c: any) => ({
           ...c,
           lastUpdated: new Date(c.lastUpdated),
-          messages: c.messages.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
+          messages: (c.messages || [])
+            .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
+            .map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
         }));
         setConversations(formatted);
         if (formatted.length > 0) {
@@ -82,7 +84,11 @@ export const AIAssistantChat: React.FC = () => {
 
   const syncConversations = (list: Conversation[]) => {
     setConversations(list);
-    localStorage.setItem(`jivexa_chats_${user?.id}`, JSON.stringify(list));
+    const sanitized = list.map(c => ({
+      ...c,
+      messages: c.messages.filter(m => typeof m.text === 'string' && m.text.trim().length > 0)
+    }));
+    localStorage.setItem(`jivexa_chats_${user?.id}`, JSON.stringify(sanitized));
   };
 
   useEffect(() => {
@@ -172,7 +178,7 @@ export const AIAssistantChat: React.FC = () => {
 
     const aiMsgId = `msg_ai_${Date.now()}`;
     let streamingText = '';
-    let currentProvider = 'Groq AI (Llama 3.3)';
+    let currentProvider = 'JIVEXA AI (Google Gemini)';
     let isEmergencyFlag = false;
 
     // Insert initial "Thinking..." placeholder
@@ -200,9 +206,14 @@ export const AIAssistantChat: React.FC = () => {
     let lastUpdate = 0;
 
     try {
+      // Construct clean prior conversation history (excluding empty text and the new user message)
+      const cleanHistory = targetConv.messages
+        .filter(m => m.id !== userMsg.id && typeof m.text === 'string' && m.text.trim().length > 0)
+        .map(m => ({ sender: m.sender, text: m.text.trim() }));
+
       await streamAIHealthAssistant(
         textToSend,
-        targetConv.messages.map(m => ({ sender: m.sender, text: m.text })),
+        cleanHistory,
         (chunk, provider, isEmerg) => {
           streamingText += chunk;
           if (provider) currentProvider = provider;
@@ -260,6 +271,27 @@ export const AIAssistantChat: React.FC = () => {
       setMaxTokens(stats.maxTokens || 1000);
     } catch (err) {
       console.error('[AI Chat Error]', err);
+      // Ensure we never leave an empty message on error
+      setConversations((prev) => 
+        prev.map((c) => {
+          if (c.id === currentConvId) {
+            return {
+              ...c,
+              messages: c.messages.map((m) => 
+                m.id === aiMsgId 
+                  ? { 
+                      ...m, 
+                      isStreaming: false, 
+                      text: streamingText || 'JIVEXA Assistant is temporarily unavailable. Please verify your connection and try again.',
+                      provider: currentProvider
+                    } 
+                  : m
+              )
+            };
+          }
+          return c;
+        })
+      );
     } finally {
       setIsLoading(false);
     }
@@ -526,7 +558,7 @@ export const AIAssistantChat: React.FC = () => {
                   <span className="live-pill">Live</span>
                 </div>
                 <span className="viewport-model-label">
-                  Groq Llama 3.3 70B · Medical Verification Tier
+                  Google Gemini · Medical Intelligence Tier
                 </span>
               </div>
             </div>
@@ -858,7 +890,7 @@ export const AIAssistantChat: React.FC = () => {
           <div className="pro-perks-card">
             <div className="perk-item">
               <Check size={16} className="perk-check" />
-              <span>Unlimited Groq Llama 3.3 70B AI Health Consultations</span>
+              <span>Unlimited Google Gemini AI Health Consultations</span>
             </div>
             <div className="perk-item">
               <Check size={16} className="perk-check" />

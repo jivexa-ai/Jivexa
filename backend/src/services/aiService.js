@@ -21,7 +21,6 @@ CRITICAL INSTRUCTIONS:
 const aiMetrics = {
   totalRequests: 0,
   geminiSuccesses: 0,
-  groqSuccesses: 0,
   emergencyDetections: 0,
   errors: 0
 };
@@ -67,25 +66,112 @@ const getGeminiModel = (generationConfig = {}) => {
 };
 
 /**
+ * Format and sanitize conversation history for Google Gemini.
+ * Gemini strictly requires:
+ * 1. Non-empty text in all parts (cannot be empty string or whitespace).
+ * 2. Alternating turns: user -> model -> user -> model -> user.
+ * 3. The first turn in contents MUST be role 'user'.
+ * 4. The last turn before generation MUST be the current user message (role 'user').
+ * 5. Absolutely no empty content or empty parts.
+ */
+const buildGeminiContents = (userMessage, history = []) => {
+  const sanitizedUserMessage = String(userMessage || '').trim();
+  if (!sanitizedUserMessage) {
+    throw new Error('User message cannot be empty');
+  }
+
+  const rawTurns = [];
+
+  if (Array.isArray(history)) {
+    for (const h of history) {
+      if (!h) continue;
+
+      // Determine role
+      let role = null;
+      const s = String(h.sender || h.role || '').toLowerCase().trim();
+      if (s === 'user') {
+        role = 'user';
+      } else if (s === 'ai' || s === 'model' || s === 'assistant') {
+        role = 'model';
+      }
+
+      if (!role) continue;
+
+      // Extract and clean text
+      let text = '';
+      if (typeof h.text === 'string') {
+        text = h.text.trim();
+      } else if (typeof h.content === 'string') {
+        text = h.content.trim();
+      } else if (Array.isArray(h.parts)) {
+        text = h.parts.map(p => (typeof p === 'string' ? p : p?.text || '')).join(' ').trim();
+      }
+
+      // CRITICAL: Discard any turn with empty text to prevent:
+      // "Content with role 'model' cannot follow empty content."
+      if (!text) continue;
+
+      rawTurns.push({ role, text });
+    }
+  }
+
+  // Deduplicate if the last history entry is already identical to the incoming userMessage
+  if (rawTurns.length > 0) {
+    const last = rawTurns[rawTurns.length - 1];
+    if (last.role === 'user' && last.text === sanitizedUserMessage) {
+      rawTurns.pop();
+    }
+  }
+
+  // Keep only the most recent conversation context (up to last 10 turns)
+  const recentTurns = rawTurns.slice(-10);
+
+  // Merge consecutive turns of the same role to strictly guarantee alternation
+  const alternatingTurns = [];
+  for (const turn of recentTurns) {
+    if (alternatingTurns.length === 0) {
+      // Gemini Rule: Conversation history MUST start with role 'user'
+      if (turn.role === 'user') {
+        alternatingTurns.push({ role: 'user', text: turn.text });
+      }
+      // If the first turn is 'model', discard it because it has no preceding user prompt
+    } else {
+      const prev = alternatingTurns[alternatingTurns.length - 1];
+      if (prev.role === turn.role) {
+        // Merge consecutive same-role messages
+        prev.text += `\n\n${turn.text}`;
+      } else {
+        alternatingTurns.push({ role: turn.role, text: turn.text });
+      }
+    }
+  }
+
+  // Now append the current userMessage as the final turn
+  if (alternatingTurns.length === 0) {
+    alternatingTurns.push({ role: 'user', text: sanitizedUserMessage });
+  } else {
+    const last = alternatingTurns[alternatingTurns.length - 1];
+    if (last.role === 'user') {
+      // If last turn was user, merge so the final turn is a valid single user turn
+      last.text += `\n\n${sanitizedUserMessage}`;
+    } else {
+      alternatingTurns.push({ role: 'user', text: sanitizedUserMessage });
+    }
+  }
+
+  // Convert to Gemini API contents format: { role: 'user' | 'model', parts: [{ text }] }
+  return alternatingTurns.map(turn => ({
+    role: turn.role,
+    parts: [{ text: turn.text }]
+  }));
+};
+
+/**
  * 1. Stream Live Gemini Chat Response (SSE Streaming)
  */
 const streamGemini = async (userMessage, history = [], onChunk) => {
   const model = getGeminiModel();
-
-  // Format conversation history for Google Gemini
-  const contents = [];
-  for (const h of history.slice(-6)) {
-    contents.push({
-      role: h.sender === 'user' ? 'user' : 'model',
-      parts: [{ text: h.text }]
-    });
-  }
-
-  // Append current user message
-  contents.push({
-    role: 'user',
-    parts: [{ text: userMessage }]
-  });
+  const contents = buildGeminiContents(userMessage, history);
 
   const responseStream = await model.generateContentStream({ contents });
 
@@ -260,6 +346,8 @@ Do not rely on text advice for emergency symptoms.`;
 
 module.exports = {
   streamLiveAiResponse,
+  streamGemini,
+  buildGeminiContents,
   analyzeReportWithAI,
   detectEmergency,
   aiMetrics,
