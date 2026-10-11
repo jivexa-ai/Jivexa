@@ -3,17 +3,20 @@
 ## 1. Prerequisites
 - Node.js >= 18.x
 - npm >= 9.x
-- MongoDB Connection URI (MongoDB Atlas or Local MongoDB)
+- Supabase PostgreSQL (Project URL & Service Role Key)
 
 ## 2. Environment Variables
 
-### Backend (`backend/.env`):
+### Backend (`backend/.env` or Render Dashboard):
 ```env
 PORT=4000
 NODE_ENV=production
-MONGO_URI=mongodb+srv://<USER>:<PASSWORD>@<CLUSTER>.mongodb.net/jivexa_health_db?retryWrites=true&w=majority
+SUPABASE_URL=https://<PROJECT-ID>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<YOUR-SERVICE-ROLE-KEY>
 JWT_SECRET=your_jwt_secret_key_here
-GROQ_API_KEY=your_groq_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+PATIENT_MVP_ONLY=false
 ```
 
 ### Frontend (`Frontend/.env`):

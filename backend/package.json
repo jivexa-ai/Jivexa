@@ -1,7 +1,7 @@
 {
   "name": "jivexa-health-backend",
   "version": "1.0.0",
-  "description": "Node.js + Express + MongoDB Backend for Jivexa Health OS",
+  "description": "Node.js + Express + Supabase PostgreSQL Backend for Jivexa Health OS",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -17,8 +17,6 @@
     "express": "^4.22.2",
     "express-validator": "^7.1.0",
     "jsonwebtoken": "^9.0.3",
-    "mongodb": "^7.5.0",
-    "mongoose": "^8.24.2",
     "nodemailer": "^9.0.5",
     "openai": "^7.5.0",
     "zod": "^4.4.3"

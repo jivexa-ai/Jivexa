@@ -1,8 +1,5 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const mongoose = require('mongoose');
-const User = require('../models/User');
-const HealthId = require('../models/HealthId');
 const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
 const { getSupabase } = require('../config/supabase');
 const { signupSchema, loginSchema, updateProfileSchema } = require('../validators/userValidators');
@@ -52,10 +49,6 @@ const getCookieOptions = () => ({
   maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
 });
 
-// Memory fallback store if local MongoDB connection is disconnected
-const inMemoryUsers = [];
-const inMemoryHealthIds = [];
-
 // @desc    Register a new user (Signup & Dispatch Email OTP)
 // @route   POST /api/auth/signup
 // @access  Public
@@ -73,491 +66,175 @@ const registerUser = async (req, res) => {
       });
     }
 
+    if (!isSupabaseConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database service is unconfigured. Supabase PostgreSQL is required.',
+        message: 'Database service is unconfigured. Supabase PostgreSQL is required.'
+      });
+    }
+
     const { name, age, email, password, role } = validationResult.data;
     const userRole = (role || 'PATIENT').toUpperCase();
 
     // Generate Prefix-Based Unique Distinguishable Role ID
     const roleId = generateRoleId(userRole);
 
-    if (isSupabaseConfigured()) {
-      const supabase = getSupabase();
-      const existingUser = await SupabaseDb.users.findOne({ email });
-      if (existingUser) {
-        return res.status(409).json({
-          success: false,
-          error: 'An account with this email already exists. Please log in.',
-          message: 'An account with this email already exists. Please log in.'
-        });
+    const supabase = getSupabase();
+    const existingUser = await SupabaseDb.users.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        error: 'An account with this email already exists. Please log in.',
+        message: 'An account with this email already exists. Please log in.'
+      });
+    }
+
+    // 1. Create account via Supabase Auth admin (pre-confirmed, zero verification email sent)
+    let authUserId = null;
+    let authErrorMsg = null;
+
+    try {
+      const { data: adminUserData, error: adminError } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          name,
+          role: userRole
+        }
+      });
+
+      if (adminError) {
+        authErrorMsg = adminError.message;
+        // If already in auth.users, try to link or update password
+        if (adminError.message?.toLowerCase().includes('already') || adminError.message?.toLowerCase().includes('registered')) {
+          const { data: listData } = await supabase.auth.admin.listUsers();
+          const existingAuth = listData?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+          if (existingAuth) {
+            authUserId = existingAuth.id;
+            await supabase.auth.admin.updateUserById(authUserId, {
+              password,
+              email_confirm: true,
+              user_metadata: { name, role: userRole }
+            }).catch(() => {});
+          }
+        }
+      } else if (adminUserData?.user) {
+        authUserId = adminUserData.user.id;
       }
+    } catch (adminException) {
+      console.warn('[Auth Controller] Supabase admin.createUser notice:', adminException.message);
+    }
 
-      // 1. Create account via Supabase Auth admin (pre-confirmed, zero verification email sent)
-      let authUserId = null;
-      let authErrorMsg = null;
-
+    // 2. Fallback to client signUp if admin API is restricted
+    if (!authUserId) {
       try {
-        const { data: adminUserData, error: adminError } = await supabase.auth.admin.createUser({
+        const { data: clientAuthData, error: clientAuthError } = await supabase.auth.signUp({
           email,
           password,
-          email_confirm: true,
-          user_metadata: {
-            name,
-            role: userRole
+          options: {
+            data: { name, role: userRole }
           }
         });
-
-        if (adminError) {
-          authErrorMsg = adminError.message;
-          // If already in auth.users, try to link or update password
-          if (adminError.message?.toLowerCase().includes('already') || adminError.message?.toLowerCase().includes('registered')) {
-            const { data: listData } = await supabase.auth.admin.listUsers();
-            const existingAuth = listData?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-            if (existingAuth) {
-              authUserId = existingAuth.id;
-              await supabase.auth.admin.updateUserById(authUserId, {
-                password,
-                email_confirm: true,
-                user_metadata: { name, role: userRole }
-              }).catch(() => {});
-            }
-          }
-        } else if (adminUserData?.user) {
-          authUserId = adminUserData.user.id;
+        if (clientAuthData?.user) {
+          authUserId = clientAuthData.user.id;
+        } else if (clientAuthError && !authErrorMsg) {
+          authErrorMsg = clientAuthError.message;
         }
-      } catch (adminErr) {
-        authErrorMsg = adminErr.message;
+      } catch (clientException) {
+        console.warn('[Auth Controller] Supabase client.signUp notice:', clientException.message);
       }
+    }
 
-      if (!authUserId) {
-        // Fallback: create native Supabase Auth user via signUp
-        try {
-          const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-              data: { name, role: userRole }
-            }
-          });
-          if (signUpData?.user) {
-            authUserId = signUpData.user.id;
-            // Confirm immediately
-            if (supabase.auth?.admin?.updateUserById) {
-              await supabase.auth.admin.updateUserById(authUserId, { email_confirm: true }).catch(() => {});
-            }
-          } else if (signUpErr) {
-            console.warn('[Supabase Auth SignUp Fallback Warning]:', signUpErr.message);
-          }
-        } catch (signUpException) {
-          console.warn('[Supabase Auth Exception]:', signUpException.message);
-        }
-      }
+    // 3. Hash password and insert profile into public.users table
+    const salt = await bcrypt.genSalt(12);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    const generatedHealthId = userRole === 'PATIENT' ? generateCanonicalHealthId() : undefined;
 
-      if (!authUserId) {
-        // Generate consistent UUID if Supabase Auth user ID was unavailable
-        authUserId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      }
+    const userProfilePayload = {
+      roleId,
+      name,
+      email,
+      password: hashedPassword,
+      role: userRole,
+      age: age || null,
+      phone: req.body.phone || '',
+      healthId: generatedHealthId,
+      emailVerified: true,
+      verified: true,
+      accountStatus: userRole === 'PATIENT' ? 'ACTIVE' : 'PENDING_DOCUMENT_REVIEW',
+      usage: { tokenUsed: 0, tokenLimit: 10000, totalTokenUsed: 0 }
+    };
 
-      // 2. Hash password with bcrypt (12 rounds) for local security & public.users
-      const salt = await bcrypt.genSalt(12);
-      const hashedPassword = await bcrypt.hash(password, salt);
+    if (authUserId) {
+      userProfilePayload.id = authUserId;
+    }
 
-      // Generate canonical Health ID for patient registration
-      const generatedHealthId = (req.body.healthId || (userRole === 'PATIENT' ? generateCanonicalHealthId() : '')).toUpperCase().trim();
-
-      // 3. Save user profile in public.users
-      const userProfilePayload = {
-        id: authUserId,
-        roleId,
-        name,
-        age: age !== undefined ? age : 28,
-        email,
-        phone: req.body.phone || req.body.phoneNumber || '',
-        healthId: generatedHealthId,
-        password: hashedPassword,
-        role: userRole,
-        emailVerified: true,
-        verified: true,
-        twoFactorEnabled: false,
-        accountStatus: 'ACTIVE',
-        usage: { tokenUsed: 0, tokenLimit: 10000 }
+    if (userRole === 'DOCTOR') {
+      userProfilePayload.professionalDetails = req.body.professionalDetails || {
+        specialization: req.body.specialization || 'General Practitioner',
+        experienceYears: req.body.experienceYears || 0,
+        nmcRegistrationNumber: req.body.nmcRegistrationNumber,
+        stateMedicalCouncil: req.body.stateMedicalCouncil || 'State Medical Council',
+        consultationFee: req.body.consultationFee || 500,
+        qualification: req.body.qualification || 'MBBS'
       };
+    } else if (userRole === 'AMBULANCE_PARTNER') {
+      userProfilePayload.vehicleDetails = req.body.vehicleDetails || {
+        vehicleNumber: req.body.vehicleNumber,
+        vehicleType: req.body.vehicleType || 'Basic Life Support (BLS)',
+        driverName: req.body.driverName || name,
+        driverPhone: req.body.driverPhone || req.body.phone || ''
+      };
+    } else if (userRole === 'PHARMACY') {
+      userProfilePayload.licenseDetails = req.body.licenseDetails || {
+        pharmacyName: req.body.pharmacyName || name,
+        drugLicenseNumber: req.body.drugLicenseNumber,
+        gstin: req.body.gstin || '29AAACJ1234F1Z5'
+      };
+    }
 
-      if (req.body.nmcRegistrationNumber || req.body.professionalDetails) {
-        userProfilePayload.professionalDetails = req.body.professionalDetails || {
-          nmcRegistrationNumber: req.body.nmcRegistrationNumber,
-          stateMedicalCouncil: req.body.stateMedicalCouncil || 'State Medical Council',
-          qualifications: req.body.qualifications || 'MBBS',
-          specialty: req.body.specialty || 'General Medicine'
-        };
-      }
-      if (req.body.vehicleNumber || req.body.vehicleDetails) {
-        userProfilePayload.vehicleDetails = req.body.vehicleDetails || {
-          vehicleNumber: req.body.vehicleNumber,
-          category: req.body.category || 'Basic Life Support',
-          permitNumber: req.body.permitNumber || `PERMIT-${Date.now()}`
-        };
-      }
-      if (req.body.drugLicenseNumber || req.body.licenseDetails) {
-        userProfilePayload.licenseDetails = req.body.licenseDetails || {
-          pharmacyName: req.body.pharmacyName || name,
-          drugLicenseNumber: req.body.drugLicenseNumber,
-          gstin: req.body.gstin || '29AAACJ1234F1Z5'
-        };
-      }
+    const userRecord = await SupabaseDb.users.create(userProfilePayload);
 
-      const userRecord = await SupabaseDb.users.create(userProfilePayload);
-
-      // Auto-create linked health_ids record for registered patients
-      if (userRole === 'PATIENT' && generatedHealthId) {
-        await SupabaseDb.healthIds.create({
-          healthId: generatedHealthId,
-          userId: userRecord.id,
-          fullName: userRecord.name,
-          email: userRecord.email,
-          phoneNumber: userRecord.phone || '',
-          dateOfBirth: req.body.dateOfBirth || req.body.dob || null,
-          gender: req.body.gender || null,
-          bloodGroup: req.body.bloodGroup || null,
-          emergencyContact: req.body.emergencyContact || null,
-          healthProfile: req.body.healthProfile || null
-        }).catch((err) => {
-          console.warn('[Auth Controller] Supabase healthIds create notice:', err.message);
-        });
-      }
-
-      // 4. Generate JWT auth token & set HTTP-only cookie
-      const token = generateToken(
-        userRecord._id || userRecord.id,
-        userRecord.email,
-        userRecord.role,
-        userRecord.name,
-        userRecord.roleId
-      );
-
-      res.cookie('token', token, getCookieOptions());
-
-      return res.status(201).json({
-        success: true,
-        requireEmailConfirmation: false,
-        requireOtp: false,
-        token,
-        email,
-        message: 'Account created successfully!',
-        user: userRecord.toAuthJSON ? userRecord.toAuthJSON() : userRecord
+    // Auto-create linked health_ids record for registered patients
+    if (userRole === 'PATIENT' && generatedHealthId) {
+      await SupabaseDb.healthIds.create({
+        healthId: generatedHealthId,
+        userId: userRecord.id,
+        fullName: userRecord.name,
+        email: userRecord.email,
+        phoneNumber: userRecord.phone || '',
+        dateOfBirth: req.body.dateOfBirth || req.body.dob || null,
+        gender: req.body.gender || null,
+        bloodGroup: req.body.bloodGroup || null,
+        emergencyContact: req.body.emergencyContact || null,
+        healthProfile: req.body.healthProfile || null
+      }).catch((err) => {
+        console.warn('[Auth Controller] Supabase healthIds create notice:', err.message);
       });
     }
 
-    // Fallback: Inactive OTP / direct activation
-    let otpEntry = null;
-    if (isOtpEnabled()) {
-      otpEntry = await createOTPEntry('signup_verification');
-    }
+    // 4. Generate JWT auth token & set HTTP-only cookie
+    const token = generateToken(
+      userRecord._id || userRecord.id,
+      userRecord.email,
+      userRecord.role,
+      userRecord.name,
+      userRecord.roleId
+    );
 
-    if (mongoose.connection.readyState === 1) {
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        if (existingUser.emailVerified) {
-          return res.status(409).json({
-            success: false,
-            error: 'An account with this email already exists. Please log in.',
-            message: 'An account with this email already exists. Please log in.'
-          });
-        }
+    res.cookie('token', token, getCookieOptions());
 
-        if (isOtpEnabled() && otpEntry) {
-          // Account exists but is unverified: check cooldown and refresh OTP
-          if (existingUser.otpDetails?.resendAvailableAt) {
-            const now = new Date();
-            const availableAt = new Date(existingUser.otpDetails.resendAvailableAt);
-            if (now < availableAt) {
-              const remainingSeconds = Math.ceil((availableAt.getTime() - now.getTime()) / 1000);
-              return res.status(429).json({
-                success: false,
-                error: `Please wait ${remainingSeconds} seconds before requesting another code.`,
-                remainingSeconds
-              });
-            }
-          }
-
-          existingUser.name = name;
-          existingUser.password = password; // Will be hashed by pre-save hook
-          existingUser.role = userRole;
-          existingUser.age = age;
-          existingUser.phone = req.body.phone || req.body.phoneNumber || existingUser.phone;
-          existingUser.healthId = req.body.healthId || existingUser.healthId;
-          existingUser.otpDetails = {
-            codeHash: otpEntry.otpHash,
-            purpose: 'signup_verification',
-            expiresAt: otpEntry.expiresAt,
-            resendAvailableAt: otpEntry.resendAvailableAt,
-            attempts: 0
-          };
-
-          await existingUser.save();
-          const emailRes = await sendOTPEmail(email, otpEntry.plainOtp, name, userRole);
-
-          return res.status(200).json({
-            success: true,
-            requireOtp: true,
-            email: existingUser.email,
-            maskedEmail: maskEmail(existingUser.email),
-            message: "We've sent a verification code to your email.",
-            previewUrl: emailRes.previewUrl
-          });
-        } else {
-          // Launch mode: OTP disabled, activate user directly
-          existingUser.name = name;
-          existingUser.password = password;
-          existingUser.role = userRole;
-          existingUser.age = age;
-          existingUser.emailVerified = true;
-          existingUser.verified = true;
-          existingUser.accountStatus = 'ACTIVE';
-          existingUser.otpDetails = undefined;
-          await existingUser.save();
-
-          return res.status(200).json({
-            success: true,
-            requireOtp: false,
-            requireEmailConfirmation: false,
-            email: existingUser.email,
-            message: 'Account updated and activated successfully.',
-            user: existingUser.toAuthJSON ? existingUser.toAuthJSON() : existingUser
-          });
-        }
-      }
-
-      // Create new user in MongoDB
-      const generatedHealthId = (req.body.healthId || (userRole === 'PATIENT' ? generateCanonicalHealthId() : '')).toUpperCase().trim();
-      const newUserObj = {
-        roleId,
-        name,
-        age,
-        email,
-        phone: req.body.phone || req.body.phoneNumber || '',
-        healthId: generatedHealthId,
-        password,
-        role: userRole,
-        emailVerified: !isOtpEnabled(),
-        verified: !isOtpEnabled(),
-        twoFactorEnabled: false,
-        accountStatus: isOtpEnabled() ? 'PENDING_EMAIL_VERIFICATION' : 'ACTIVE'
-      };
-
-      if (isOtpEnabled() && otpEntry) {
-        newUserObj.otpDetails = {
-          codeHash: otpEntry.otpHash,
-          purpose: 'signup_verification',
-          expiresAt: otpEntry.expiresAt,
-          resendAvailableAt: otpEntry.resendAvailableAt,
-          attempts: 0
-        };
-      }
-
-      if (req.body.nmcRegistrationNumber) {
-        newUserObj.professionalDetails = {
-          nmcRegistrationNumber: req.body.nmcRegistrationNumber,
-          stateMedicalCouncil: req.body.stateMedicalCouncil || 'State Medical Council',
-          qualifications: req.body.qualifications || 'MBBS',
-          specialty: req.body.specialty || 'General Medicine'
-        };
-      }
-      if (req.body.vehicleNumber) {
-        newUserObj.vehicleDetails = {
-          vehicleNumber: req.body.vehicleNumber,
-          category: req.body.category || 'Basic Life Support',
-          permitNumber: req.body.permitNumber || `PERMIT-${Date.now()}`
-        };
-      }
-      if (req.body.drugLicenseNumber) {
-        newUserObj.licenseDetails = {
-          pharmacyName: req.body.pharmacyName || name,
-          drugLicenseNumber: req.body.drugLicenseNumber,
-          gstin: req.body.gstin || '29AAACJ1234F1Z5'
-        };
-      }
-
-      const user = await User.create(newUserObj);
-
-      if (userRole === 'PATIENT' && generatedHealthId) {
-        await HealthId.create({
-          healthId: generatedHealthId,
-          userId: user._id,
-          fullName: user.name,
-          email: user.email,
-          phoneNumber: user.phone || '',
-          dateOfBirth: req.body.dateOfBirth || req.body.dob || null,
-          gender: req.body.gender || null,
-          bloodGroup: req.body.bloodGroup || null,
-          emergencyContact: req.body.emergencyContact || null,
-          healthProfile: req.body.healthProfile || null
-        }).catch((err) => {
-          console.warn('[Auth Controller] Mongo HealthId create notice:', err.message);
-        });
-      }
-
-      if (isOtpEnabled() && otpEntry) {
-        const emailRes = await sendOTPEmail(email, otpEntry.plainOtp, name, userRole);
-        return res.status(201).json({
-          success: true,
-          requireOtp: true,
-          email: user.email,
-          maskedEmail: maskEmail(user.email),
-          message: "We've sent a verification code to your email.",
-          previewUrl: emailRes.previewUrl
-        });
-      }
-
-      const token = generateToken(
-        user._id || user.id,
-        user.email,
-        user.role,
-        user.name,
-        user.roleId
-      );
-
-      res.cookie('token', token, getCookieOptions());
-
-      return res.status(201).json({
-        success: true,
-        requireOtp: false,
-        requireEmailConfirmation: false,
-        token,
-        email: user.email,
-        message: 'Account registered successfully.',
-        user: user.toAuthJSON ? user.toAuthJSON() : user
-      });
-    } else {
-      // Memory Store Fallback
-      const existingUser = inMemoryUsers.find((u) => u.email === email);
-      if (existingUser) {
-        if (existingUser.emailVerified) {
-          return res.status(409).json({
-            success: false,
-            error: 'An account with this email already exists. Please log in.',
-            message: 'An account with this email already exists. Please log in.'
-          });
-        }
-        existingUser.name = name;
-        const salt = await bcrypt.genSalt(12);
-        existingUser.password = await bcrypt.hash(password, salt);
-        existingUser.role = userRole;
-
-        if (isOtpEnabled() && otpEntry) {
-          existingUser.otpDetails = {
-            codeHash: otpEntry.otpHash,
-            purpose: 'signup_verification',
-            expiresAt: otpEntry.expiresAt,
-            resendAvailableAt: otpEntry.resendAvailableAt,
-            attempts: 0
-          };
-          const emailRes = await sendOTPEmail(email, otpEntry.plainOtp, name, userRole);
-          return res.status(200).json({
-            success: true,
-            requireOtp: true,
-            email: existingUser.email,
-            maskedEmail: maskEmail(existingUser.email),
-            message: "We've sent a verification code to your email.",
-            previewUrl: emailRes.previewUrl
-          });
-        }
-
-        existingUser.emailVerified = true;
-        existingUser.verified = true;
-        existingUser.accountStatus = 'ACTIVE';
-        existingUser.otpDetails = undefined;
-
-        return res.status(200).json({
-          success: true,
-          requireOtp: false,
-          requireEmailConfirmation: false,
-          email: existingUser.email,
-          message: 'Account updated successfully.',
-          user: existingUser
-        });
-      }
-
-      const salt = await bcrypt.genSalt(12);
-      const hashedPassword = await bcrypt.hash(password, salt);
-      const newUserId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-      const generatedHealthId = (req.body.healthId || (userRole === 'PATIENT' ? generateCanonicalHealthId() : '')).toUpperCase().trim();
-      const memUser = {
-        _id: newUserId,
-        id: newUserId,
-        roleId,
-        name,
-        age,
-        email,
-        phone: req.body.phone || req.body.phoneNumber || '',
-        healthId: generatedHealthId,
-        password: hashedPassword,
-        role: userRole,
-        emailVerified: !isOtpEnabled(),
-        verified: !isOtpEnabled(),
-        twoFactorEnabled: false,
-        accountStatus: isOtpEnabled() ? 'PENDING_EMAIL_VERIFICATION' : 'ACTIVE',
-        professionalDetails: req.body.nmcRegistrationNumber ? { nmcRegistrationNumber: req.body.nmcRegistrationNumber } : undefined,
-        vehicleDetails: req.body.vehicleNumber ? { vehicleNumber: req.body.vehicleNumber } : undefined,
-        licenseDetails: req.body.drugLicenseNumber ? { drugLicenseNumber: req.body.drugLicenseNumber } : undefined,
-        createdAt: new Date().toISOString()
-      };
-
-      if (isOtpEnabled() && otpEntry) {
-        memUser.otpDetails = {
-          codeHash: otpEntry.otpHash,
-          purpose: 'signup_verification',
-          expiresAt: otpEntry.expiresAt,
-          resendAvailableAt: otpEntry.resendAvailableAt,
-          attempts: 0
-        };
-      }
-
-      inMemoryUsers.push(memUser);
-
-      if (userRole === 'PATIENT' && generatedHealthId) {
-        inMemoryHealthIds.push({
-          healthId: generatedHealthId,
-          userId: newUserId,
-          fullName: memUser.name,
-          email: memUser.email,
-          phoneNumber: memUser.phone || '',
-          dateOfBirth: '2000-01-01',
-          gender: 'Unspecified',
-          bloodGroup: 'O+'
-        });
-      }
-
-      if (isOtpEnabled() && otpEntry) {
-        const emailRes = await sendOTPEmail(email, otpEntry.plainOtp, name, userRole);
-        return res.status(201).json({
-          success: true,
-          requireOtp: true,
-          email: memUser.email,
-          maskedEmail: maskEmail(memUser.email),
-          message: "We've sent a verification code to your email.",
-          previewUrl: emailRes.previewUrl
-        });
-      }
-
-      const token = generateToken(
-        memUser._id || memUser.id,
-        memUser.email,
-        memUser.role,
-        memUser.name,
-        memUser.roleId
-      );
-
-      res.cookie('token', token, getCookieOptions());
-
-      return res.status(201).json({
-        success: true,
-        requireOtp: false,
-        requireEmailConfirmation: false,
-        token,
-        email: memUser.email,
-        message: 'Account created successfully.',
-        user: memUser
-      });
-    }
+    return res.status(201).json({
+      success: true,
+      requireEmailConfirmation: false,
+      requireOtp: false,
+      token,
+      email,
+      message: 'Account created successfully!',
+      user: userRecord.toAuthJSON ? userRecord.toAuthJSON() : userRecord
+    });
   } catch (error) {
     console.error('[Backend Auth Signup Error]:', error);
     return res.status(500).json({
@@ -577,84 +254,33 @@ const sendOTP = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Email address is required to send verification email' });
     }
 
+    if (!isSupabaseConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
+      });
+    }
+
     // TEMPORARILY DISABLED FOR LAUNCH
     // Re-enable OTP after launch by setting OTP_ENABLED=true in backend/.env.
     if (!isOtpEnabled() && !req.path.includes('verification')) {
-      if (isSupabaseConfigured()) {
-        const resendResult = await resendVerificationEmail(email);
-        return res.status(resendResult.success ? 200 : 400).json(resendResult);
-      }
-      return res.status(200).json({
-        success: true,
-        otpDisabled: true,
-        message: 'OTP dispatch is temporarily inactive for launch.'
-      });
-    }
-
-    if (isSupabaseConfigured()) {
       const resendResult = await resendVerificationEmail(email);
-      if (!resendResult.success) {
-        return res.status(400).json({
-          success: false,
-          error: resendResult.error || 'Failed to dispatch verification email',
-          message: resendResult.error || 'Failed to dispatch verification email'
-        });
-      }
+      return res.status(resendResult.success ? 200 : 400).json(resendResult);
+    }
 
-      return res.status(200).json({
-        success: true,
-        message: `Verification email dispatched to ${maskEmail(email)}. Please check your inbox.`,
-        maskedEmail: maskEmail(email)
+    const resendResult = await resendVerificationEmail(email);
+    if (!resendResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: resendResult.error || 'Failed to dispatch verification email',
+        message: resendResult.error || 'Failed to dispatch verification email'
       });
     }
-
-    let targetUser = null;
-    if (mongoose.connection.readyState === 1) {
-      targetUser = await User.findOne({ email });
-    } else {
-      targetUser = inMemoryUsers.find((u) => u.email === email);
-    }
-
-    if (!targetUser) {
-      return res.status(404).json({ success: false, error: 'No account registered with this email address' });
-    }
-
-    if (isOtpEnabled()) {
-      // Rate limiting: check resend cooldown
-      if (targetUser.otpDetails?.resendAvailableAt) {
-        const now = new Date();
-        const availableAt = new Date(targetUser.otpDetails.resendAvailableAt);
-        if (now < availableAt) {
-          const remainingSeconds = Math.ceil((availableAt.getTime() - now.getTime()) / 1000);
-          return res.status(429).json({
-            success: false,
-            error: `Please wait ${remainingSeconds} seconds before requesting a new code.`,
-            remainingSeconds
-          });
-        }
-      }
-
-      const otpEntry = await createOTPEntry('signup_verification');
-
-      targetUser.otpDetails = {
-        codeHash: otpEntry.otpHash,
-        purpose: 'signup_verification',
-        expiresAt: otpEntry.expiresAt,
-        resendAvailableAt: otpEntry.resendAvailableAt,
-        attempts: 0
-      };
-
-      if (mongoose.connection.readyState === 1) {
-        await targetUser.save();
-      }
-    }
-
-    await resendVerificationEmail(targetUser.email);
 
     return res.status(200).json({
       success: true,
-      message: `Verification email dispatched to ${maskEmail(targetUser.email)}`,
-      maskedEmail: maskEmail(targetUser.email)
+      message: `Verification email dispatched to ${maskEmail(email)}. Please check your inbox.`,
+      maskedEmail: maskEmail(email)
     });
   } catch (error) {
     console.error('[Send OTP Error]:', error);
@@ -662,7 +288,7 @@ const sendOTP = async (req, res) => {
   }
 };
 
-// @desc    Verify Email / OTP (Supabase Auth / Custom Fallback)
+// @desc    Verify Email / OTP (Supabase Auth)
 // @route   POST /api/auth/verify-otp, POST /api/auth/check-verification
 // @access  Public / Private
 const verifyOTP = async (req, res) => {
@@ -678,135 +304,53 @@ const verifyOTP = async (req, res) => {
       });
     }
 
-    const { email, code, token: inputToken, purpose = 'signup_verification' } = req.body;
+    const { email, code, token: inputToken } = req.body;
     if (!email) {
       return res.status(400).json({ success: false, error: 'Email address is required' });
     }
 
-    if (isSupabaseConfigured()) {
-      const supabase = getSupabase();
-      let targetUser = await SupabaseDb.users.findOne({ email });
-      if (!targetUser) {
-        return res.status(404).json({ success: false, error: 'User account not found' });
-      }
-
-      // If code/token passed, attempt verification via Supabase Auth
-      const otpCode = code || inputToken;
-      if (otpCode) {
-        // TEMPORARILY DISABLED FOR LAUNCH
-        // Re-enable OTP after launch by setting OTP_ENABLED=true.
-        if (isOtpEnabled()) {
-          const { error } = await supabase.auth.verifyOtp({
-            email: email.trim().toLowerCase(),
-            token: otpCode.trim(),
-            type: 'signup'
-          });
-          if (error && !error.message?.toLowerCase().includes('already')) {
-            return res.status(400).json({ success: false, error: error.message });
-          }
-        }
-      }
-
-      targetUser.emailVerified = true;
-      targetUser.verified = true;
-      targetUser.otpDetails = undefined;
-
-      if (targetUser.id && supabase.auth?.admin?.updateUserById) {
-        try {
-          await supabase.auth.admin.updateUserById(targetUser.id, { email_confirm: true });
-        } catch (adminErr) {
-          // non-fatal admin sync
-        }
-      }
-
-      if (!targetUser.roleId) {
-        targetUser.roleId = generateRoleId(targetUser.role);
-      }
-
-      if (targetUser.role === 'PATIENT') {
-        targetUser.accountStatus = 'ACTIVE';
-      } else if (targetUser.role === 'DOCTOR') {
-        targetUser.accountStatus = targetUser.professionalDetails?.nmcRegistrationNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
-      } else if (targetUser.role === 'AMBULANCE_PARTNER') {
-        targetUser.accountStatus = targetUser.vehicleDetails?.vehicleNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
-      } else if (targetUser.role === 'PHARMACY') {
-        targetUser.accountStatus = targetUser.licenseDetails?.drugLicenseNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
-      } else {
-        targetUser.accountStatus = 'ACTIVE';
-      }
-
-      await targetUser.save();
-
-      const token = generateToken(
-        targetUser._id || targetUser.id,
-        targetUser.email,
-        targetUser.role,
-        targetUser.name,
-        targetUser.roleId
-      );
-
-      res.cookie('token', token, getCookieOptions());
-
-      const userAuthData = targetUser.toAuthJSON ? targetUser.toAuthJSON() : {
-        id: targetUser.id || targetUser._id,
-        roleId: targetUser.roleId,
-        name: targetUser.name,
-        email: targetUser.email,
-        role: targetUser.role,
-        emailVerified: true,
-        verified: true,
-        accountStatus: targetUser.accountStatus
-      };
-
-      return res.status(200).json({
-        success: true,
-        message: `🎉 Email verified successfully! Unique Role ID: ${targetUser.roleId}`,
-        token,
-        user: userAuthData
+    if (!isSupabaseConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
       });
     }
 
-    let targetUser = null;
-    if (isSupabaseConfigured()) {
-      targetUser = await SupabaseDb.users.findOne({ email });
-    } else if (mongoose.connection.readyState === 1) {
-      targetUser = await User.findOne({ email });
-    } else {
-      targetUser = inMemoryUsers.find((u) => u.email === email);
-    }
-
+    const supabase = getSupabase();
+    let targetUser = await SupabaseDb.users.findOne({ email });
     if (!targetUser) {
       return res.status(404).json({ success: false, error: 'User account not found' });
     }
 
-    // Verify code via crypto otpService with purpose validation
-    // TEMPORARILY DISABLED FOR LAUNCH
-    // Re-enable OTP after launch by setting OTP_ENABLED=true.
-    if (isOtpEnabled()) {
-      const verification = await verifyOTPEntry(targetUser.otpDetails, code, purpose);
-      if (!verification.valid) {
-        if (targetUser.otpDetails) {
-          targetUser.otpDetails.attempts = (targetUser.otpDetails.attempts || 0) + 1;
-          if (isSupabaseConfigured() || mongoose.connection.readyState === 1) await targetUser.save();
-        }
-        return res.status(400).json({
-          success: false,
-          reason: verification.reason,
-          error: verification.message
-        });
+    // If code/token passed, attempt verification via Supabase Auth
+    const otpCode = code || inputToken;
+    if (otpCode) {
+      const { error } = await supabase.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: otpCode.trim(),
+        type: 'signup'
+      });
+      if (error && !error.message?.toLowerCase().includes('already')) {
+        return res.status(400).json({ success: false, error: error.message });
       }
     }
 
-    // OTP Verified Successfully! Clear OTP & update state
     targetUser.emailVerified = true;
     targetUser.verified = true;
-    targetUser.otpDetails = undefined; // Single-use invalidation
+    targetUser.otpDetails = undefined;
+
+    if (targetUser.id && supabase.auth?.admin?.updateUserById) {
+      try {
+        await supabase.auth.admin.updateUserById(targetUser.id, { email_confirm: true });
+      } catch (adminErr) {
+        // non-fatal admin sync
+      }
+    }
 
     if (!targetUser.roleId) {
       targetUser.roleId = generateRoleId(targetUser.role);
     }
 
-    // Transition role-based state machine
     if (targetUser.role === 'PATIENT') {
       targetUser.accountStatus = 'ACTIVE';
     } else if (targetUser.role === 'DOCTOR') {
@@ -819,9 +363,7 @@ const verifyOTP = async (req, res) => {
       targetUser.accountStatus = 'ACTIVE';
     }
 
-    if (isSupabaseConfigured() || mongoose.connection.readyState === 1) {
-      await targetUser.save();
-    }
+    await targetUser.save();
 
     const token = generateToken(
       targetUser._id || targetUser.id,
@@ -863,15 +405,14 @@ const submitRoleVerification = async (req, res) => {
   try {
     const { email, nmcRegistrationNumber, stateMedicalCouncil, vehicleNumber, category, drugLicenseNumber, gstin } = req.body;
 
-    let targetUser = null;
-    if (isSupabaseConfigured()) {
-      targetUser = await SupabaseDb.users.findOne({ email });
-    } else if (mongoose.connection.readyState === 1) {
-      targetUser = await User.findOne({ email });
-    } else {
-      targetUser = inMemoryUsers.find((u) => u.email === email);
+    if (!isSupabaseConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
+      });
     }
 
+    let targetUser = await SupabaseDb.users.findOne({ email });
     if (!targetUser) {
       return res.status(404).json({ success: false, error: 'User account not found' });
     }
@@ -900,9 +441,7 @@ const submitRoleVerification = async (req, res) => {
       targetUser.accountStatus = 'VERIFIED';
     }
 
-    if (isSupabaseConfigured() || mongoose.connection.readyState === 1) {
-      await targetUser.save();
-    }
+    await targetUser.save();
 
     return res.json({
       success: true,
@@ -932,224 +471,129 @@ const loginUser = async (req, res) => {
       });
     }
 
+    if (!isSupabaseConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database service is unconfigured. Supabase PostgreSQL is required.',
+        message: 'Database service is unconfigured. Supabase PostgreSQL is required.'
+      });
+    }
+
     const { email, password } = validationResult.data;
 
-    let user = null;
-    let isMatch = false;
+    const supabase = getSupabase();
+    let user = await SupabaseDb.users.findOne({ email });
 
-    if (isSupabaseConfigured()) {
-      const supabase = getSupabase();
-      let user = await SupabaseDb.users.findOne({ email });
-
-      // Check account lockout
-      if (user && user.isLocked()) {
-        const remainingMins = Math.ceil((user.lockUntil.getTime() - Date.now()) / (60 * 1000));
-        return res.status(423).json({
-          success: false,
-          error: `Account is temporarily locked due to multiple failed login attempts. Please try again in ${remainingMins} minutes.`
-        });
-      }
-
-      // 1. Authenticate via native Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
-        password
-      });
-
-      if (authError) {
-        const errMsg = authError.message || '';
-        // If Supabase reports email is not confirmed, sync admin confirmation if local profile is active
-        if (errMsg.toLowerCase().includes('email not confirmed')) {
-          if (user && user.id && supabase.auth?.admin?.updateUserById) {
-            supabase.auth.admin.updateUserById(user.id, { email_confirm: true }).catch(() => {});
-          }
-        }
-
-        // Check fallback password match in public.users if user profile exists
-        let isLocalMatch = false;
-        if (user) {
-          isLocalMatch = await user.matchPassword(password);
-        }
-
-        if (!isLocalMatch) {
-          if (user) {
-            user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
-            if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
-              user.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
-              await user.save();
-              return res.status(423).json({
-                success: false,
-                error: 'Account locked due to 5 consecutive failed login attempts. Please try again in 15 minutes.'
-              });
-            }
-            await user.save();
-          }
-          return res.status(401).json({
-            success: false,
-            error: 'Invalid email or password credentials',
-            message: 'Invalid email or password credentials'
-          });
-        }
-
-        if (!user.emailVerified && user.accountStatus !== 'ACTIVE') {
-          return res.status(403).json({
-            success: false,
-            requireEmailConfirmation: false,
-            requireOtp: false,
-            email,
-            error: 'Account is pending activation. Please contact support.',
-            message: 'Account is pending activation. Please contact support.'
-          });
-        }
-      }
-
-      // If Supabase auth succeeded, retrieve or create profile in public.users
-      if (!user) {
-        user = await SupabaseDb.users.findOne({ email });
-      }
-
-      if (!user && authData?.user) {
-        const newRoleId = generateRoleId('PATIENT');
-        const salt = await bcrypt.genSalt(12);
-        const hashedPassword = await bcrypt.hash(password, salt);
-        user = await SupabaseDb.users.create({
-          id: authData.user.id,
-          roleId: newRoleId,
-          name: authData.user.user_metadata?.name || 'User',
-          email: authData.user.email,
-          password: hashedPassword,
-          role: authData.user.user_metadata?.role || 'PATIENT',
-          emailVerified: true,
-          verified: true,
-          accountStatus: 'ACTIVE'
-        });
-      }
-
-      if (!user) {
-        return res.status(404).json({ success: false, error: 'User profile not found' });
-      }
-
-      // Ensure verified status updated
-      user.emailVerified = true;
-      user.verified = true;
-      user.failedLoginAttempts = 0;
-      user.lockUntil = undefined;
-      if (user.accountStatus === 'PENDING_EMAIL_VERIFICATION') {
-        if (user.role === 'PATIENT') {
-          user.accountStatus = 'ACTIVE';
-        } else if (user.role === 'DOCTOR') {
-          user.accountStatus = user.professionalDetails?.nmcRegistrationNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
-        } else if (user.role === 'AMBULANCE_PARTNER') {
-          user.accountStatus = user.vehicleDetails?.vehicleNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
-        } else if (user.role === 'PHARMACY') {
-          user.accountStatus = user.licenseDetails?.drugLicenseNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
-        } else {
-          user.accountStatus = 'ACTIVE';
-        }
-      }
-      if (!user.roleId) {
-        user.roleId = generateRoleId(user.role);
-      }
-      await user.save();
-
-      const token = generateToken(
-        user._id || user.id,
-        user.email,
-        user.role,
-        user.name,
-        user.roleId
-      );
-
-      res.cookie('token', token, getCookieOptions());
-
-      return res.status(200).json({
-        success: true,
-        message: 'User logged in successfully',
-        token,
-        supabaseAccessToken: authData?.session?.access_token || undefined,
-        user: user.toAuthJSON ? user.toAuthJSON() : user
-      });
-    } else if (mongoose.connection.readyState === 1) {
-      user = await User.findOne({ email });
-      if (!user) {
-        // Enumeration protection: return generic error
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid email or password credentials',
-          message: 'Invalid email or password credentials'
-        });
-      }
-
-      // Check Brute-Force Lockout
-      if (user.isLocked()) {
-        const remainingMins = Math.ceil((user.lockUntil.getTime() - Date.now()) / (60 * 1000));
-        return res.status(423).json({
-          success: false,
-          error: `Account is temporarily locked due to multiple failed login attempts. Please try again in ${remainingMins} minutes.`
-        });
-      }
-
-      isMatch = await user.matchPassword(password);
-
-      if (!isMatch) {
-        // Increment failed attempt counter & check lock threshold
-        user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
-        if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
-          user.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
-          await user.save();
-          return res.status(423).json({
-            success: false,
-            error: 'Account locked due to 5 consecutive failed login attempts. Please try again in 15 minutes.'
-          });
-        }
-        await user.save();
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid email or password credentials',
-          message: 'Invalid email or password credentials'
-        });
-      }
-
-      // Reset failed attempts on password success
-      user.failedLoginAttempts = 0;
-      user.lockUntil = undefined;
-      await user.save();
-
-    } else {
-      user = inMemoryUsers.find((u) => u.email === email);
-      if (!user) {
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid email or password credentials',
-          message: 'Invalid email or password credentials'
-        });
-      }
-      isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid email or password credentials',
-          message: 'Invalid email or password credentials'
-        });
-      }
-    }
-
-    // Check account activation
-    if (!user.emailVerified && user.accountStatus !== 'ACTIVE') {
-      return res.status(403).json({
+    // Check account lockout
+    if (user && user.isLocked()) {
+      const remainingMins = Math.ceil((user.lockUntil.getTime() - Date.now()) / (60 * 1000));
+      return res.status(423).json({
         success: false,
-        requireOtp: false,
-        requireEmailConfirmation: false,
-        email: user.email,
-        error: 'Account is pending activation. Please contact support.',
-        message: 'Account is pending activation. Please contact support.'
+        error: `Account is temporarily locked due to multiple failed login attempts. Please try again in ${remainingMins} minutes.`
       });
     }
 
+    // 1. Authenticate via native Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password
+    });
+
+    if (authError) {
+      const errMsg = authError.message || '';
+      // If Supabase reports email is not confirmed, sync admin confirmation if local profile is active
+      if (errMsg.toLowerCase().includes('email not confirmed')) {
+        if (user && user.id && supabase.auth?.admin?.updateUserById) {
+          supabase.auth.admin.updateUserById(user.id, { email_confirm: true }).catch(() => {});
+        }
+      }
+
+      // Check fallback password match in public.users if user profile exists
+      let isLocalMatch = false;
+      if (user) {
+        isLocalMatch = await user.matchPassword(password);
+      }
+
+      if (!isLocalMatch) {
+        if (user) {
+          user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+          if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
+            user.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
+            await user.save();
+            return res.status(423).json({
+              success: false,
+              error: 'Account locked due to 5 consecutive failed login attempts. Please try again in 15 minutes.'
+            });
+          }
+          await user.save();
+        }
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid email or password credentials',
+          message: 'Invalid email or password credentials'
+        });
+      }
+
+      if (!user.emailVerified && user.accountStatus !== 'ACTIVE') {
+        return res.status(403).json({
+          success: false,
+          requireEmailConfirmation: false,
+          requireOtp: false,
+          email,
+          error: 'Account is pending activation. Please contact support.',
+          message: 'Account is pending activation. Please contact support.'
+        });
+      }
+    }
+
+    // If Supabase auth succeeded, retrieve or create profile in public.users
+    if (!user) {
+      user = await SupabaseDb.users.findOne({ email });
+    }
+
+    if (!user && authData?.user) {
+      const newRoleId = generateRoleId('PATIENT');
+      const salt = await bcrypt.genSalt(12);
+      const hashedPassword = await bcrypt.hash(password, salt);
+      user = await SupabaseDb.users.create({
+        id: authData.user.id,
+        roleId: newRoleId,
+        name: authData.user.user_metadata?.name || 'User',
+        email: authData.user.email,
+        password: hashedPassword,
+        role: authData.user.user_metadata?.role || 'PATIENT',
+        emailVerified: true,
+        verified: true,
+        accountStatus: 'ACTIVE'
+      });
+    }
+
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User profile not found' });
+    }
+
+    // Ensure verified status updated
+    user.emailVerified = true;
+    user.verified = true;
+    user.failedLoginAttempts = 0;
+    user.lockUntil = undefined;
+    if (user.accountStatus === 'PENDING_EMAIL_VERIFICATION') {
+      if (user.role === 'PATIENT') {
+        user.accountStatus = 'ACTIVE';
+      } else if (user.role === 'DOCTOR') {
+        user.accountStatus = user.professionalDetails?.nmcRegistrationNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
+      } else if (user.role === 'AMBULANCE_PARTNER') {
+        user.accountStatus = user.vehicleDetails?.vehicleNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
+      } else if (user.role === 'PHARMACY') {
+        user.accountStatus = user.licenseDetails?.drugLicenseNumber ? 'VERIFIED' : 'PENDING_DOCUMENT_REVIEW';
+      } else {
+        user.accountStatus = 'ACTIVE';
+      }
+    }
     if (!user.roleId) {
       user.roleId = generateRoleId(user.role);
-      if (isSupabaseConfigured() || mongoose.connection.readyState === 1) await user.save();
     }
+    await user.save();
 
     const token = generateToken(
       user._id || user.id,
@@ -1161,25 +605,12 @@ const loginUser = async (req, res) => {
 
     res.cookie('token', token, getCookieOptions());
 
-    const userAuthData = user.toAuthJSON ? user.toAuthJSON() : {
-      id: user.id || user._id,
-      roleId: user.roleId,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      emailVerified: true,
-      verified: true,
-      accountStatus: user.accountStatus,
-      avatarUrl: user.avatarUrl || user.professionalDetails?.avatarUrl || user.usage?.avatarUrl || '',
-      createdAt: user.createdAt || user.created_at,
-      updatedAt: user.updatedAt || user.updated_at
-    };
-
     return res.status(200).json({
       success: true,
       message: 'User logged in successfully',
       token,
-      user: userAuthData
+      supabaseAccessToken: authData?.session?.access_token || undefined,
+      user: user.toAuthJSON ? user.toAuthJSON() : user
     });
   } catch (error) {
     console.error('[Backend Auth Login Error]:', error);
@@ -1259,60 +690,31 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    const { name, age, email } = validationResult.data;
-
-    if (isSupabaseConfigured()) {
-      const user = await SupabaseDb.users.findById(req.user.id || req.user._id);
-      if (!user) {
-        return res.status(404).json({ success: false, error: 'User not found' });
-      }
-
-      if (name) user.name = name;
-      if (age !== undefined) user.age = age;
-      if (email) user.email = email;
-
-      await user.save();
-
-      return res.json({
-        success: true,
-        message: 'Profile updated successfully',
-        user: user.toAuthJSON()
-      });
-    } else if (mongoose.connection.readyState === 1) {
-      const user = await User.findById(req.user._id);
-      if (!user) {
-        return res.status(404).json({ success: false, error: 'User not found' });
-      }
-
-      if (name) user.name = name;
-      if (age !== undefined) user.age = age;
-      if (email) user.email = email;
-
-      await user.save();
-
-      return res.json({
-        success: true,
-        message: 'Profile updated successfully',
-        user: user.toAuthJSON()
-      });
-    } else {
-      const userIndex = inMemoryUsers.findIndex((u) => u.id === req.user.id);
-      if (userIndex !== -1) {
-        if (name) inMemoryUsers[userIndex].name = name;
-        if (age !== undefined) inMemoryUsers[userIndex].age = age;
-        if (email) inMemoryUsers[userIndex].email = email;
-      }
-      return res.json({
-        success: true,
-        message: 'Profile updated successfully',
-        user: {
-          ...req.user,
-          name: name || req.user.name,
-          age: age !== undefined ? age : req.user.age,
-          email: email || req.user.email
-        }
+    if (!isSupabaseConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
       });
     }
+
+    const { name, age, email } = validationResult.data;
+
+    const user = await SupabaseDb.users.findById(req.user.id || req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    if (name) user.name = name;
+    if (age !== undefined) user.age = age;
+    if (email) user.email = email;
+
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: user.toAuthJSON()
+    });
   } catch (error) {
     console.error('[Update Profile Error]:', error);
     return res.status(500).json({ success: false, error: error.message || 'Server error updating profile' });
@@ -1327,6 +729,13 @@ const uploadProfilePhoto = async (req, res) => {
     const userId = req.user.id || req.user._id;
     if (!userId) {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    if (!isSupabaseConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
+      });
     }
 
     const { image, mimeType } = req.body;
@@ -1394,36 +803,24 @@ const uploadProfilePhoto = async (req, res) => {
       publicUrl = `data:${detectedMime};base64,${base64Data}`;
     }
 
-    // Persist in database
-    if (isSupabaseConfigured()) {
-      const user = await SupabaseDb.users.findById(userId);
-      if (user) {
-        user.avatarUrl = publicUrl;
-        user.professionalDetails = { ...(user.professionalDetails || {}), avatarUrl: publicUrl, avatarPath: filePath };
-        user.usage = { ...(user.usage || {}), avatarUrl: publicUrl, avatarPath: filePath };
-        await user.save();
-      }
+    // Persist in Supabase
+    const user = await SupabaseDb.users.findById(userId);
+    if (user) {
+      user.avatarUrl = publicUrl;
+      user.professionalDetails = { ...(user.professionalDetails || {}), avatarUrl: publicUrl, avatarPath: filePath };
+      user.usage = { ...(user.usage || {}), avatarUrl: publicUrl, avatarPath: filePath };
+      await user.save();
+    }
 
-      const healthIdRecord = await SupabaseDb.healthIds.findOne({ userId });
-      if (healthIdRecord) {
-        healthIdRecord.healthProfile = { ...(healthIdRecord.healthProfile || {}), avatarUrl: publicUrl };
-        const hClient = getSupabase();
-        if (hClient) {
-          await hClient
-            .from('health_ids')
-            .update({ health_profile: healthIdRecord.healthProfile, updated_at: new Date().toISOString() })
-            .eq('user_id', String(userId));
-        }
-      }
-    } else if (mongoose.connection.readyState === 1 && mongoose.Types.ObjectId.isValid(userId)) {
-      await User.findByIdAndUpdate(userId, {
-        avatarUrl: publicUrl,
-        'professionalDetails.avatarUrl': publicUrl
-      });
-    } else {
-      const memUser = inMemoryUsers.find((u) => u.id === userId || u._id === userId);
-      if (memUser) {
-        memUser.avatarUrl = publicUrl;
+    const healthIdRecord = await SupabaseDb.healthIds.findOne({ userId });
+    if (healthIdRecord) {
+      healthIdRecord.healthProfile = { ...(healthIdRecord.healthProfile || {}), avatarUrl: publicUrl };
+      const hClient = getSupabase();
+      if (hClient) {
+        await hClient
+          .from('health_ids')
+          .update({ health_profile: healthIdRecord.healthProfile, updated_at: new Date().toISOString() })
+          .eq('user_id', String(userId));
       }
     }
 
@@ -1452,6 +849,13 @@ const removeProfilePhoto = async (req, res) => {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
+    if (!isSupabaseConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
+      });
+    }
+
     const client = getSupabase();
     if (client) {
       const { data: files } = await client.storage.from('profile-photos').list(userId);
@@ -1461,35 +865,23 @@ const removeProfilePhoto = async (req, res) => {
       }
     }
 
-    if (isSupabaseConfigured()) {
-      const user = await SupabaseDb.users.findById(userId);
-      if (user) {
-        user.avatarUrl = '';
-        if (user.professionalDetails) delete user.professionalDetails.avatarUrl;
-        if (user.usage) delete user.usage.avatarUrl;
-        await user.save();
-      }
+    const user = await SupabaseDb.users.findById(userId);
+    if (user) {
+      user.avatarUrl = '';
+      if (user.professionalDetails) delete user.professionalDetails.avatarUrl;
+      if (user.usage) delete user.usage.avatarUrl;
+      await user.save();
+    }
 
-      const healthIdRecord = await SupabaseDb.healthIds.findOne({ userId });
-      if (healthIdRecord && healthIdRecord.healthProfile) {
-        delete healthIdRecord.healthProfile.avatarUrl;
-        const hClient = getSupabase();
-        if (hClient) {
-          await hClient
-            .from('health_ids')
-            .update({ health_profile: healthIdRecord.healthProfile, updated_at: new Date().toISOString() })
-            .eq('user_id', String(userId));
-        }
-      }
-    } else if (mongoose.connection.readyState === 1 && mongoose.Types.ObjectId.isValid(userId)) {
-      await User.findByIdAndUpdate(userId, {
-        avatarUrl: '',
-        $unset: { 'professionalDetails.avatarUrl': 1 }
-      });
-    } else {
-      const memUser = inMemoryUsers.find((u) => u.id === userId || u._id === userId);
-      if (memUser) {
-        memUser.avatarUrl = '';
+    const healthIdRecord = await SupabaseDb.healthIds.findOne({ userId });
+    if (healthIdRecord && healthIdRecord.healthProfile) {
+      delete healthIdRecord.healthProfile.avatarUrl;
+      const hClient = getSupabase();
+      if (hClient) {
+        await hClient
+          .from('health_ids')
+          .update({ health_profile: healthIdRecord.healthProfile, updated_at: new Date().toISOString() })
+          .eq('user_id', String(userId));
       }
     }
 

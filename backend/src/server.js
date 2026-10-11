@@ -5,9 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 
-const connectDB = require('./config/db');
 const { checkSupabaseHealth, isSupabaseConfigured } = require('./config/supabase');
-const mongoose = require('mongoose');
 
 const app = express();
 
@@ -52,7 +50,7 @@ app.use('/api/ai', require('./routes/aiRoutes'));
 // System Health Check Endpoint
 app.get('/api/health', async (req, res) => {
   const isSupa = isSupabaseConfigured();
-  let supabaseStatus = { configured: false };
+  let supabaseStatus = { configured: false, connected: false };
   if (isSupa) {
     try {
       supabaseStatus = { configured: true, ...(await checkSupabaseHealth()) };
@@ -60,14 +58,13 @@ app.get('/api/health', async (req, res) => {
       supabaseStatus = { configured: true, connected: false, error: e.message };
     }
   }
-  const mongoConnected = mongoose.connection && mongoose.connection.readyState === 1;
 
   res.json({
-    status: 'OK',
+    status: isSupa && supabaseStatus.connected ? 'OK' : 'DEGRADED',
     service: 'JIVEXA Health OS Backend Service',
-    database: isSupa ? 'Supabase PostgreSQL' : 'MongoDB',
-    activeDatabase: isSupa ? 'Supabase' : (mongoConnected ? 'MongoDB' : 'Memory Fallback'),
-    authProvider: isSupa ? 'Supabase Auth' : 'Custom JWT',
+    database: 'Supabase PostgreSQL',
+    activeDatabase: isSupa && supabaseStatus.connected ? 'Supabase' : (isSupa ? 'Supabase (Unreachable)' : 'DISCONNECTED'),
+    authProvider: 'Supabase Auth',
     // TEMPORARILY DISABLED FOR LAUNCH
     // Re-enable OTP after launch by setting OTP_ENABLED=true in backend/.env.
     otp: {
@@ -97,10 +94,6 @@ app.get('/api/health', async (req, res) => {
       ]
     },
     supabase: supabaseStatus,
-    mongodb: {
-      connected: mongoConnected,
-      readyState: mongoose.connection ? mongoose.connection.readyState : 0
-    },
     timestamp: new Date().toISOString()
   });
 });
@@ -127,9 +120,9 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 const startServer = async () => {
   try {
-    // 1. Supabase Initialization check on startup
+    // 1. Supabase Initialization check on startup (SOLE DATABASE)
     if (isSupabaseConfigured()) {
-      console.log('[Supabase] Credentials detected in backend/.env.');
+      console.log('[Supabase] Credentials detected in backend environment.');
       checkSupabaseHealth()
         .then((health) => {
           if (health.connected && health.tablePermission === 'GRANTED') {
@@ -148,15 +141,12 @@ const startServer = async () => {
           console.warn('[Supabase] Initialization probe notice:', e.message);
         });
     } else {
-      console.log('[Supabase] Not configured in .env (running in MongoDB/fallback mode)');
+      console.error(
+        '[Supabase] FATAL ERROR: Supabase is NOT configured. Jivexa Health OS requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.'
+      );
     }
 
-    // 2. Decouple MongoDB: attempt connection in background without blocking or terminating Express
-    connectDB().catch((err) => {
-      console.warn('[MongoDB] Background connection error (non-fatal):', err.message);
-    });
-
-    // 3. Start Express server and attach error listeners explicitly on 0.0.0.0
+    // 2. Start Express server and attach error listeners explicitly on 0.0.0.0
     const server = app.listen(PORT, HOST, () => {
       console.log(
         `[JIVEXA Backend] Production-Grade Auth Server running in ${

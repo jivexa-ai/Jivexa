@@ -1,6 +1,4 @@
 const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
-const User = require('../models/User');
 const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
 const { getSupabase } = require('../config/supabase');
 
@@ -24,6 +22,13 @@ const protect = async (req, res, next) => {
     });
   }
 
+  if (!isSupabaseConfigured()) {
+    return res.status(500).json({
+      success: false,
+      message: 'Database service is currently unconfigured. Supabase PostgreSQL is required.'
+    });
+  }
+
   try {
     const secretKey = process.env.JWT_SECRET || 'jivexa_health_jwt_secret_key_2026_super_secure_auth_token_string';
     let decoded = null;
@@ -32,51 +37,27 @@ const protect = async (req, res, next) => {
       decoded = jwt.verify(token, secretKey);
     } catch (jwtErr) {
       // If application JWT verification fails, check Supabase Auth access token
-      if (isSupabaseConfigured()) {
-        const client = getSupabase();
-        if (client) {
-          const { data: { user: authUser }, error } = await client.auth.getUser(token);
-          if (authUser && !error) {
-            decoded = { id: authUser.id, email: authUser.email };
-          }
+      const client = getSupabase();
+      if (client) {
+        const { data: { user: authUser }, error } = await client.auth.getUser(token);
+        if (authUser && !error) {
+          decoded = { id: authUser.id, email: authUser.email };
         }
       }
       if (!decoded) throw jwtErr;
     }
 
-    if (isSupabaseConfigured()) {
-      let user = await SupabaseDb.users.findById(decoded.id);
-      if (!user && decoded.email) {
-        user = await SupabaseDb.users.findOne({ email: decoded.email });
-      }
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User associated with this token no longer exists'
-        });
-      }
-      req.user = user;
-    } else if (mongoose.connection.readyState === 1) {
-      const user = await User.findById(decoded.id).select('-password');
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User associated with this token no longer exists'
-        });
-      }
-      req.user = user;
-    } else {
-      // Memory Store Fallback
-      req.user = {
-        id: decoded.id,
-        _id: decoded.id,
-        name: decoded.name || 'Memory User',
-        email: decoded.email,
-        role: decoded.role || 'PATIENT',
-        verified: true,
-        usage: { tokenUsed: 0, tokenLimit: 10000 }
-      };
+    let user = await SupabaseDb.users.findById(decoded.id);
+    if (!user && decoded.email) {
+      user = await SupabaseDb.users.findOne({ email: decoded.email });
     }
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User associated with this token no longer exists'
+      });
+    }
+    req.user = user;
 
     next();
   } catch (error) {

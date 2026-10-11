@@ -1,14 +1,14 @@
-process.env.NODE_ENV = 'test';
-process.env.JWT_SECRET = 'test_backend_jwt_secret_key_12345678901234567890';
+require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const authRoutes = require('./src/routes/authRoutes');
+const { getSupabase } = require('./src/config/supabase');
 
 const runTests = async () => {
   console.log('\n======================================================');
-  console.log('🚀 JIVEXA HEALTH - BACKEND/SRC TEST SUITE');
+  console.log('🚀 JIVEXA HEALTH - SUPABASE-ONLY BACKEND TEST SUITE');
   console.log('======================================================\n');
 
   let server;
@@ -39,7 +39,7 @@ const runTests = async () => {
       res.json({
         status: 'OK',
         service: 'JIVEXA Health OS Backend Service',
-        database: 'In-Memory / MongoDB'
+        database: 'Supabase PostgreSQL'
       });
     });
 
@@ -56,20 +56,23 @@ const runTests = async () => {
     {
       const res = await fetch(`${BASE_URL}/api/health`);
       const body = await res.json();
-      const pass = res.status === 200 && body.status === 'OK';
-      console.log(`[TEST 1] /api/health -> Status: ${res.status} | Pass: ${pass}`);
+      const pass = res.status === 200 && body.status === 'OK' && body.database === 'Supabase PostgreSQL';
+      console.log(`[TEST 1] /api/health -> Status: ${res.status} | DB: ${body.database} | Pass: ${pass}`);
       testResults.push({ name: 'Health Check', pass, status: res.status });
     }
 
-    // TEST 2: Registration
+    // Unique test user per test run to ensure repeatable test execution
+    const runId = Date.now();
     const testUser = {
-      name: 'Ananya Verma',
-      email: 'ananya.verma@test.jivexa.com',
+      name: `Ananya Verma ${runId}`,
+      email: `test.patient.${runId}@jivexa.com`,
       password: 'Password@123',
       role: 'PATIENT'
     };
 
     let userToken = '';
+
+    // TEST 2: Registration
     {
       const res = await fetch(`${BASE_URL}/user/signup`, {
         method: 'POST',
@@ -142,6 +145,23 @@ const runTests = async () => {
       const pass = res.status === 200 && body.success === true && body.user?.email === testUser.email;
       console.log(`[TEST 6] Protected Route -> Status: ${res.status} | User: ${body.user?.name} | Pass: ${pass}`);
       testResults.push({ name: 'Protected Route', pass, status: res.status });
+    }
+
+    // Cleanup: Remove test user from Supabase public.users and health_ids
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('health_ids').delete().eq('email', testUser.email);
+        await supabase.from('users').delete().eq('email', testUser.email);
+        const { data: listData } = await supabase.auth.admin.listUsers();
+        const authUser = listData?.users?.find((u) => u.email === testUser.email);
+        if (authUser?.id) {
+          await supabase.auth.admin.deleteUser(authUser.id);
+        }
+        console.log(`🧹 Cleaned up test user: ${testUser.email}`);
+      } catch (cleanErr) {
+        console.warn('Notice: Test cleanup failed:', cleanErr.message);
+      }
     }
 
     console.log('\n======================================================');
