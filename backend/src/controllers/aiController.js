@@ -6,6 +6,48 @@
 const { streamLiveAiResponse, analyzeReportWithAI, aiMetrics } = require('../services/aiService');
 const { getUserUsage, checkTokenLimit, recordTokenUsage, upgradeSubscription, FREE_TIER_TOKEN_LIMIT } = require('../services/tokenUsageService');
 const { MongoDb } = require('../services/mongoDbService');
+const User = require('../models/User');
+
+// Helper to extract user-declared names (e.g., "mera naam Mayank hai", "merar name mayank hai...", "my name is Mayank")
+const extractNameFromText = (text) => {
+  if (!text || typeof text !== 'string') return null;
+  const clean = text.trim();
+
+  // If it's a question inquiring about their name, DO NOT extract a name
+  const questionWords = /\b(kya|what|kaun|who|batao|bataiye|tell|know|pata|yaad|remember|check)\b/i;
+  if (clean.includes('?') || questionWords.test(clean)) {
+    return null;
+  }
+
+  // Common patterns for declaring one's name in Hindi / Hinglish / English
+  const patterns = [
+    /(?:mera|merar|mari|mere)\s+(?:naam|name)\s+(?:hai\s+)?([A-Za-z]{2,20}(?:\s+[A-Za-z]{2,20})?)/i,
+    /(?:my\s+name\s+is|i\s+am|im|call\s+me)\s+([A-Za-z]{2,20}(?:\s+[A-Za-z]{2,20})?)/i,
+    /(?:main|mai)\s+([A-Za-z]{2,20})\s+(?:hoon|hu)/i,
+    /(?:naam|name)\s*[:=]\s*([A-Za-z]{2,20}(?:\s+[A-Za-z]{2,20})?)/i
+  ];
+
+  const stopWords = new Set([
+    'hai', 'hu', 'hoon', 'kya', 'batao', 'doctor', 'patient', 'jivexa', 'ai', 'fever', 'cough',
+    'headache', 'pain', 'hello', 'namaste', 'test', 'report', 'here', 'please', 'sir', 'madam',
+    'ok', 'okay', 'yes', 'no', 'not', 'the', 'is', 'a', 'an', 'this', 'that'
+  ]);
+
+  for (const regex of patterns) {
+    const match = clean.match(regex);
+    if (match && match[1]) {
+      let candidate = match[1].trim();
+      candidate = candidate.replace(/\s+(?:hai|hu|hoon)$/i, '').replace(/[.,!?;:]+$/, '').trim();
+      const parts = candidate.split(/\s+/);
+      const validParts = parts.filter(p => !stopWords.has(p.toLowerCase()) && /^[A-Za-z]{2,20}$/.test(p));
+      if (validParts.length > 0) {
+        return validParts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
+      }
+    }
+  }
+
+  return null;
+};
 
 // Per-user rate limiting memory map (max 10 requests / minute)
 const rateLimitMap = new Map();
@@ -32,9 +74,17 @@ const checkRateLimit = (userId) => {
  * Streaming SSE AI Chat Controller (Zero-Crash Guarded)
  */
 const handleChatRequest = async (req, res) => {
-  const user = req.user || null;
-  const userId = user ? String(user._id || user.id) : (req.body.userId || 'anonymous_user');
+  let user = req.user || null;
+  const passedUserId = req.body.userId;
+  if (!user && passedUserId && passedUserId !== 'anonymous_user') {
+    try {
+      user = await User.findOne({ _id: String(passedUserId) });
+    } catch (e) {}
+  }
+
+  const userId = user ? String(user._id || user.id) : (passedUserId || 'anonymous_user');
   const userProfile = user ? {
+    id: String(user._id),
     name: user.name,
     age: user.age || null,
     role: user.role || 'PATIENT'
@@ -65,6 +115,80 @@ const handleChatRequest = async (req, res) => {
     });
   }
 
+  // 3. Name Extraction & Account Identity Sync
+  if (user && userProfile) {
+    const declaredName = extractNameFromText(message);
+    if (declaredName) {
+      userProfile.name = declaredName;
+      try {
+        await User.findByIdAndUpdate(user._id, { name: declaredName });
+        user.name = declaredName;
+      } catch (nameErr) {
+        console.warn('[AI Controller] Name update warning:', nameErr.message);
+      }
+    }
+  }
+
+  // 4. Cross-Conversation Memory Retrieval (strictly scoped to this authenticated user)
+  let crossConversationContext = '';
+  if (user && userId && userId !== 'anonymous_user') {
+    try {
+      const pastConvs = await MongoDb.conversations.find({ userId: String(userId) });
+      const otherConvs = pastConvs.filter(c => String(c._id) !== String(conversationId));
+
+      // If user profile name is generic or missing, search past conversations
+      const isGenericName = !userProfile.name || ['patient', 'user', 'guest', 'anonymous'].includes(userProfile.name.toLowerCase().trim());
+      if (isGenericName) {
+        for (const past of otherConvs) {
+          const fromTitle = extractNameFromText(past.title);
+          if (fromTitle) {
+            userProfile.name = fromTitle;
+            await User.findByIdAndUpdate(user._id, { name: fromTitle }).catch(() => {});
+            break;
+          }
+          if (Array.isArray(past.messages)) {
+            for (const m of past.messages) {
+              if (m.sender === 'user' && m.text) {
+                const fromMsg = extractNameFromText(m.text);
+                if (fromMsg) {
+                  userProfile.name = fromMsg;
+                  await User.findByIdAndUpdate(user._id, { name: fromMsg }).catch(() => {});
+                  break;
+                }
+              }
+            }
+            if (userProfile.name && !['patient', 'user', 'guest', 'anonymous'].includes(userProfile.name.toLowerCase().trim())) {
+              break;
+            }
+          }
+        }
+      }
+
+      // Build structured, token-efficient cross-conversation memory snippet
+      if (otherConvs.length > 0) {
+        const summaries = [];
+        for (const c of otherConvs.slice(0, 5)) {
+          const title = c.title || 'Previous Consultation';
+          const userMsgs = (c.messages || [])
+            .filter(m => m.sender === 'user' && m.text)
+            .slice(-2)
+            .map(m => m.text)
+            .join(' | ');
+          if (userMsgs) {
+            summaries.push(`- Session "${title}": User noted "${userMsgs.slice(0, 120)}"`);
+          } else {
+            summaries.push(`- Session "${title}"`);
+          }
+        }
+        if (summaries.length > 0) {
+          crossConversationContext = `PRIOR SESSIONS CONTEXT (Other consultations under this user account):\n${summaries.join('\n')}`;
+        }
+      }
+    } catch (memErr) {
+      console.warn('[AI Controller] Cross-conversation memory retrieval notice:', memErr.message);
+    }
+  }
+
   // Setup Server-Sent Events (SSE) streaming headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -85,7 +209,8 @@ const handleChatRequest = async (req, res) => {
           res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
         }
       },
-      userProfile
+      userProfile,
+      crossConversationContext
     );
 
     // Record token usage
@@ -254,6 +379,23 @@ const saveConversation = async (req, res) => {
       title: title || 'New Conversation',
       messages: Array.isArray(messages) ? messages : []
     });
+
+    // Check if title or any user message declares user's name
+    const fromTitle = extractNameFromText(title);
+    if (fromTitle) {
+      await User.findByIdAndUpdate(userId, { name: fromTitle }).catch(() => {});
+    } else if (Array.isArray(messages)) {
+      for (const m of messages) {
+        if (m && m.sender === 'user' && m.text) {
+          const fromMsg = extractNameFromText(m.text);
+          if (fromMsg) {
+            await User.findByIdAndUpdate(userId, { name: fromMsg }).catch(() => {});
+            break;
+          }
+        }
+      }
+    }
+
     return res.json({
       success: true,
       conversation: conv.toJSON ? conv.toJSON() : conv
@@ -304,5 +446,6 @@ module.exports = {
   getConversationById,
   saveConversation,
   deleteConversation,
-  clearAllConversations
+  clearAllConversations,
+  extractNameFromText
 };

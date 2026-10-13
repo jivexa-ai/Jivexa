@@ -23,12 +23,15 @@ OPERATIONAL GUIDELINES BY QUERY TYPE:
   * Clarify that you provide educational guidance and are not a substitute for a licensed doctor.
   * DO NOT prescribe medications or claim to provide official medical diagnoses.
 
-3. USER NAME & MEMORY ("mera naam kya hai", "what is my name?"):
-- When the user asks for their name:
-  * If the verified user profile provides their name or the user stated their name in earlier messages, address or confirm it warmly (e.g., "Aapka naam [Name] hai" / "Your name is [Name]").
-  * If the name was NEVER provided in the verified profile or conversation history, honestly and politely state that you do not know their name yet (e.g., "Aapne abhi tak apna naam nahi bataya hai. Aapka naam kya hai?").
+3. USER NAME & PERSISTENT MEMORY ("mera naam kya hai", "what is my name?", "mera name kya h", "do you know my name?"):
+- When the user asks for their name or identity:
+  * Check the authenticated user profile, cross-conversation memory, and conversation history.
+  * If their name is provided (e.g., "[Name]"), ALWAYS confirm and address them by their name warmly, politely, and directly (e.g., "Aapka naam [Name] hai" / "Your name is [Name]").
+  * NEVER claim that you do not know their name if it appears in the authenticated profile or cross-conversation memory!
+  * If the user introduces themselves (e.g. "mera naam Mayank hai"), warmly acknowledge it and address them by their name.
+  * If and only if the name was NEVER provided anywhere in the verified profile, cross-conversation memory, or conversation history, honestly and politely state that they haven't shared their name yet (e.g., "Aapne abhi tak apna naam nahi bataya hai. Aapka naam kya hai?").
   * NEVER invent, guess, or fabricate a name.
-  * DO NOT attach medical advice, clinical checklists, or care pathways to name questions.
+  * DO NOT attach medical advice, clinical checklists, care pathways, or emergency disclaimers to name or identity questions.
 
 4. MISSING CONTEXT & AMBIGUOUS QUERIES ("Explain key reference ranges for this condition.", "Is this normal?", "What medicine should I take?"):
 - When the user asks for reference ranges, treatment, or interpretation of "this condition" or "this report" but no condition, lab test, or report has been mentioned in the conversation:
@@ -75,9 +78,9 @@ const estimateTokens = (text) => {
 };
 
 /**
- * Initialize Google Gemini Client with fallback model support and user profile context
+ * Initialize Google Gemini Client with fallback model support, user profile context, and cross-conversation memory
  */
-const getGeminiModel = (generationConfig = {}, userProfile = null) => {
+const getGeminiModel = (generationConfig = {}, userProfile = null, crossConversationContext = '') => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured in backend environment');
@@ -90,8 +93,16 @@ const getGeminiModel = (generationConfig = {}, userProfile = null) => {
 
   if (userProfile && userProfile.name) {
     systemInstruction += `\n\nAUTHENTICATED USER IDENTITY:
-- The authenticated user's name is "${userProfile.name}".
-- When the user asks for their name or greets you, warmly acknowledge and address them by "${userProfile.name}".`;
+- The authenticated user's confirmed name is "${userProfile.name}".
+- When the user asks for their name ("mera naam kya hai", "what is my name?", "mera name batao", etc.), ALWAYS confirm and tell them their name is "${userProfile.name}" warmly and clearly.
+- Address them politely by their name ("${userProfile.name}").
+- NEVER state that you do not know their name when it is confirmed here.`;
+  }
+
+  if (crossConversationContext && crossConversationContext.trim()) {
+    systemInstruction += `\n\nCROSS-CONVERSATION PERSISTENT MEMORY:
+${crossConversationContext.trim()}
+- The user has prior consultations above under this authenticated account. Use this context seamlessly to recall past topics or user facts when relevant.`;
   }
 
   const cleanConfig = { ...generationConfig };
@@ -213,7 +224,7 @@ const buildGeminiContents = (userMessage, history = []) => {
 /**
  * 1. Stream Live Gemini Chat Response (SSE Streaming)
  */
-const streamGemini = async (userMessage, history = [], onChunk, userProfile = null) => {
+const streamGemini = async (userMessage, history = [], onChunk, userProfile = null, crossConversationContext = '') => {
   const candidateModels = [
     process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     'gemini-3-flash-preview',
@@ -225,7 +236,7 @@ const streamGemini = async (userMessage, history = [], onChunk, userProfile = nu
 
   for (const modelName of uniqueModels) {
     try {
-      const model = getGeminiModel({ model: modelName }, userProfile);
+      const model = getGeminiModel({ model: modelName }, userProfile, crossConversationContext);
       const contents = buildGeminiContents(userMessage, history);
 
       const responseStream = await model.generateContentStream({ contents });
@@ -368,7 +379,7 @@ Return ONLY valid JSON matching this EXACT structure:
 /**
  * 3. Stream Live AI Response (Primary: Google Gemini)
  */
-const streamLiveAiResponse = async (userMessage, history = [], onChunk, userProfile = null) => {
+const streamLiveAiResponse = async (userMessage, history = [], onChunk, userProfile = null, crossConversationContext = '') => {
   aiMetrics.totalRequests++;
 
   // 1. Emergency Safety Check Guardrail
@@ -391,7 +402,7 @@ Do not rely on text advice for emergency symptoms.`;
 
   // 2. Primary Engine: Google Gemini (gemini-2.5-flash)
   try {
-    return await streamGemini(userMessage, history, onChunk, userProfile);
+    return await streamGemini(userMessage, history, onChunk, userProfile, crossConversationContext);
   } catch (geminiErr) {
     console.warn('[JIVEXA AI] Google Gemini primary error:', geminiErr.message);
   }

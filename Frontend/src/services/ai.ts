@@ -529,6 +529,7 @@ export const streamAIHealthAssistant = async (
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {})
       },
+      credentials: 'include',
       body: JSON.stringify({
         message: query.trim(),
         history: (history || [])
@@ -681,12 +682,12 @@ export const fetchBackendConversations = async (): Promise<any[]> => {
   try {
     const apiBase = getApiBaseUrl();
     const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jivexa_node_jwt_token') : null;
-    if (!token) return [];
 
     const res = await fetch(`${apiBase}/conversations`, {
       headers: {
-        'Authorization': `Bearer ${token}`
-      }
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      credentials: 'include'
     });
     if (res.ok) {
       const data = await res.json();
@@ -702,14 +703,14 @@ export const saveBackendConversation = async (conv: { id: string; title: string;
   try {
     const apiBase = getApiBaseUrl();
     const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jivexa_node_jwt_token') : null;
-    if (!token) return;
 
     await fetch(`${apiBase}/conversations`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
       },
+      credentials: 'include',
       body: JSON.stringify({
         id: conv.id,
         title: conv.title,
@@ -725,13 +726,13 @@ export const deleteBackendConversation = async (id: string) => {
   try {
     const apiBase = getApiBaseUrl();
     const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jivexa_node_jwt_token') : null;
-    if (!token) return;
 
     await fetch(`${apiBase}/conversations/${id}`, {
       method: 'DELETE',
       headers: {
-        'Authorization': `Bearer ${token}`
-      }
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      credentials: 'include'
     });
   } catch (err) {
     console.warn('[AI Client] Failed to delete conversation from backend:', err);
@@ -742,13 +743,13 @@ export const clearAllBackendConversations = async () => {
   try {
     const apiBase = getApiBaseUrl();
     const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jivexa_node_jwt_token') : null;
-    if (!token) return;
 
     await fetch(`${apiBase}/conversations`, {
       method: 'DELETE',
       headers: {
-        'Authorization': `Bearer ${token}`
-      }
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      credentials: 'include'
     });
   } catch (err) {
     console.warn('[AI Client] Failed to clear conversations from backend:', err);

@@ -765,10 +765,11 @@ export const AIAssistantChat: React.FC = () => {
             if (lastAiMsg.sender !== 'ai' || !lastUserMsg) return null;
             
             const userText = lastUserMsg.text.toLowerCase().trim();
-            const isCasual = [
-              'hi', 'hello', 'hey', 'namaste', 'mera naam', 'mera name', 'what is my name',
-              'who are you', 'tum kaun ho', 'aap kaun ho', 'kaise ho', 'how are you', 'thank', 'thanks', 'ok', 'okay'
-            ].some(k => userText === k || userText.startsWith(k));
+            const casualKeywords = [
+              'hi', 'hello', 'hey', 'namaste', 'naam', 'name', 'who', 'kaun',
+              'kaise', 'how are you', 'thank', 'dhanyawad', 'shukriya', 'bye', 'ok', 'okay', 'yes', 'no'
+            ];
+            const isCasual = casualKeywords.some(k => userText.includes(k));
 
             if (isCasual) return null;
 
@@ -1914,35 +1915,42 @@ export const AIAssistantChat: React.FC = () => {
 
         /* Followup Prompts Bar */
         .followup-prompts-bar {
-          padding: 0 24px 8px 24px;
+          padding: 8px 24px 10px 24px;
           display: flex;
-          gap: 8px;
+          gap: 10px;
           flex-wrap: wrap;
-          background: #fcfdfd;
+          align-items: center;
+          background: #f8fafc;
+          border-top: 1px solid #f1f5f9;
         }
 
         .followup-prompt-chip {
-          padding: 6px 12px;
-          border-radius: 16px;
+          padding: 6px 14px;
+          border-radius: 9999px;
           border: 1px solid #a7f3d0;
-          background: #ecfdf5;
-          font-size: 0.76rem;
-          font-weight: 700;
-          color: #0f766e;
+          background: #ffffff;
+          font-size: 0.78rem;
+          font-weight: 600;
+          color: #047857;
           cursor: pointer;
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          transition: all 0.15s ease;
+          white-space: nowrap;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+          transition: all 0.2s ease;
         }
 
         .followup-prompt-chip:hover {
-          background: #d1fae5;
+          background: #ecfdf5;
+          border-color: #6ee7b7;
           transform: translateY(-1px);
+          box-shadow: 0 2px 4px rgba(16, 185, 129, 0.12);
         }
 
         .chip-sparkle {
           color: #059669;
+          flex-shrink: 0;
         }
 
         /* Apple-Inspired Pill Composer */
