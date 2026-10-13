@@ -295,28 +295,42 @@ JIVEXA Health OS is an all-in-one AI-powered healthcare ecosystem uniting patien
 };
 
 /**
- * Check if query is related to health, medicine, medical issues, or JIVEXA website
+ * Check if query is conversational (greeting, identity, name check, casual conversation)
+ */
+export const isConversationalQuery = (query: string): boolean => {
+  const q = query.toLowerCase().trim();
+  const greetings = [
+    'hi', 'hello', 'hey', 'namaste', 'good morning', 'good evening', 'good afternoon', 'hola',
+    'kaise ho', 'how are you', 'who are you', 'tum kaun ho', 'aap kaun ho', 'kya karte ho',
+    'what can you do', 'mera naam', 'mera name', 'what is my name', 'tell me my name',
+    'apna naam', 'your name', 'thank you', 'thanks', 'dhanyawad', 'shukriya', 'bye', 'ok', 'okay'
+  ];
+  return greetings.some(g => q === g || q.startsWith(g) || q.includes(g));
+};
+
+/**
+ * Check if query is related to health, medicine, medical issues, JIVEXA website, or conversational interaction
  */
 export const isHealthOrMedicalQuery = (query: string): boolean => {
   const q = query.toLowerCase().trim();
   
-  // 1. JIVEXA website queries -> Always true
+  // 1. Conversational & Greeting queries -> Always true (allow natural assistant dialogue)
+  if (isConversationalQuery(q)) return true;
+
+  // 2. JIVEXA website queries -> Always true
   if (isJivexaWebsiteQuery(q)) return true;
 
-  // 2. Reject obvious non-health / non-medical queries on client side
+  // 3. Reject obvious non-health / non-medical queries on client side
   const nonHealthKeywords = [
-    'python', 'javascript', 'java', 'c++', 'html', 'css', 'code', 'programming', 'software',
-    'game', 'movie', 'song', 'music', 'car', 'bike', 'cricket', 'football', 'match', 'score',
-    'politics', 'election', 'president', 'prime minister', 'weather', 'joke', 'riddle',
-    'recipe', 'cooking', 'restaurant', 'shopping', 'stock', 'crypto', 'bitcoin', 'math',
-    'algebra', 'calculus', 'physics', 'chemistry formula', 'what is c', 'c language',
-    'capital of', 'currency of', 'history of', 'who won', 'how to build'
+    'python', 'javascript', 'java', 'c++', 'html', 'css', 'programming', 'software code',
+    'cricket score', 'football match', 'election result', 'weather forecast',
+    'crypto price', 'bitcoin', 'stock market', 'algebra equation', 'calculus derivative'
   ];
 
   const hasNonHealthKeyword = nonHealthKeywords.some(k => q.includes(k));
   if (hasNonHealthKeyword) return false;
 
-  // 3. Allow all health, medical, biochemical, symptom, and diagnostic questions (e.g. "what is lactic acid", "hemoglobin", "CBC", "fever", "paracetamol")
+  // 4. Allow health, medical, biochemical, symptom, and diagnostic questions
   return true;
 };
 
@@ -441,7 +455,8 @@ export const streamAIHealthAssistant = async (
   query: string,
   history: { sender: 'user' | 'ai'; text: string }[] = [],
   onChunk: (chunk: string, provider?: string, isEmergency?: boolean) => void,
-  userId = 'anonymous_user'
+  userId = 'anonymous_user',
+  conversationId?: string
 ): Promise<AIResponse> => {
   // 1. Check for Emergency Symptoms
   const emergencyKeywords = ['chest pain', 'breathing difficulty', 'shortness of breath', 'heart attack', 'stroke', 'unconscious', 'severe bleeding', 'sudden weakness', 'suicide', 'self harm'];
@@ -483,25 +498,26 @@ export const streamAIHealthAssistant = async (
     };
   }
 
-  // 4. Check 6-Hour Rate Limit (1000 Tokens Limit) for Health Queries
-  const rateLimit = checkHealthBotRateLimit(userId);
-  if (!rateLimit.allowed) {
-    const limitText = `⏳ Daily AI Health Token Limit Reached (1000/1000 Tokens - 100% Used)! You have reached your AI Health Bot token limit for this period. You can ask health and medical questions again after ${rateLimit.remainingHours} hours.
+  // 4. Check 6-Hour Rate Limit (1000 Tokens Limit) for Clinical Queries only (greetings & platform guide are free)
+  const isConversational = isConversationalQuery(query);
+  if (!isConversational) {
+    const rateLimit = checkHealthBotRateLimit(userId);
+    if (!rateLimit.allowed) {
+      const limitText = `⏳ Daily AI Health Token Limit Reached (1000/1000 Tokens - 100% Used)! You have reached your AI Health Bot token limit for this period. You can ask health and medical questions again after ${rateLimit.remainingHours} hours.
 
 💡 (Note: You can still ask any questions about the JIVEXA Health website and platform guide anytime!)`;
-    onChunk(limitText, 'JIVEXA Health AI Bot', false);
-    return {
-      text: limitText,
-      isEmergency: false,
-      suggestions: ['How to book doctor on JIVEXA', 'How to order medicines on JIVEXA', 'How to call ambulance on JIVEXA'],
-      disclaimer: '6-Hour Token Rate Limit Notice.',
-      provider: 'JIVEXA Health AI Bot',
-      limitReached: true
-    };
+      onChunk(limitText, 'JIVEXA Health AI Bot', false);
+      return {
+        text: limitText,
+        isEmergency: false,
+        suggestions: [],
+        disclaimer: '6-Hour Token Rate Limit Notice.',
+        provider: 'JIVEXA Health AI Bot',
+        limitReached: true
+      };
+    }
+    incrementHealthBotRateLimit(userId, 100);
   }
-
-  // Increment Rate Limit counter by ~100 tokens per health response
-  incrementHealthBotRateLimit(userId, 100);
 
   // 5. Call Jivexa Backend Google Gemini SSE Streaming Endpoint
   try {
@@ -518,7 +534,8 @@ export const streamAIHealthAssistant = async (
         history: (history || [])
           .filter(h => typeof h?.text === 'string' && h.text.trim().length > 0)
           .map((h) => ({ sender: h.sender, text: h.text.trim() })),
-        userId
+        userId,
+        conversationId
       })
     });
 
@@ -557,19 +574,19 @@ export const streamAIHealthAssistant = async (
         return {
           text: fullText,
           isEmergency: false,
-          suggestions: ['Ask follow-up question', 'Save to Health Records', 'Book Doctor Consult'],
-          disclaimer: 'AI-generated clinical literacy summary for educational purposes only. Always consult a licensed healthcare practitioner.',
+          suggestions: [],
+          disclaimer: '',
           provider: 'JIVEXA AI (Google Gemini)'
         };
       }
     }
   } catch (backendErr) {
-    console.warn('[JIVEXA AI] Backend stream error, falling back to local clinical knowledge engine:', backendErr);
+    console.warn('[JIVEXA AI] Backend stream error, falling back to local assistant engine:', backendErr);
   }
 
-  // 6. Clinical Knowledge Fallback Engine
+  // 6. Local Assistant Fallback Engine (No generic fake clinical diagrams)
   const localRes = await askAIHealthAssistant(query);
-  onChunk(localRes.text, 'JIVEXA Health AI Bot', localRes.isEmergency);
+  onChunk(localRes.text, 'JIVEXA Health AI', localRes.isEmergency);
   return localRes;
 };
 
@@ -607,40 +624,133 @@ export const upgradeUserToPro = async (userId = 'anonymous_user') => {
 };
 
 /**
- * Clinical Knowledge Fallback Engine
+ * Local Fallback Engine when Backend Network is Temporarily Offline
  */
 export const askAIHealthAssistant = async (query: string): Promise<AIResponse> => {
   await new Promise((resolve) => setTimeout(resolve, 200));
 
-  const content = `### 🏥 JIVEXA Health AI Clinical Guidance for "${query.trim()}"
+  const q = query.toLowerCase().trim();
 
-Evaluated against clinical guidelines and evidence-based medical literature.
+  // Natural responses for conversational queries when offline
+  if (isConversationalQuery(q)) {
+    if (q.includes('naam') || q.includes('name')) {
+      return {
+        isEmergency: false,
+        text: 'I cannot retrieve your saved profile name while the backend service is reconnecting. Please check your network connection.',
+        suggestions: [],
+        disclaimer: '',
+        provider: 'JIVEXA Health AI'
+      };
+    }
+    if (q.includes('kaun') || q.includes('who')) {
+      return {
+        isEmergency: false,
+        text: 'I am JIVEXA Health AI, an intelligent healthcare information assistant created to help you understand health symptoms, lab reports, medications, and wellness guidance.',
+        suggestions: [],
+        disclaimer: '',
+        provider: 'JIVEXA Health AI'
+      };
+    }
+    return {
+      isEmergency: false,
+      text: 'Hello! I am JIVEXA Health AI. How can I assist you with your health questions today?',
+      suggestions: [],
+      disclaimer: '',
+      provider: 'JIVEXA Health AI'
+    };
+  }
 
-#### 📊 Recommended Medical Care Pathway
-\`\`\`
-+-----------------------------------------------------------------------+
-|                 JIVEXA HEALTH CARE EVALUATION FLOW                    |
-+-----------------------------------------------------------------------+
- [INITIAL HEALTH QUERY] ──► Analyze Symptoms & Medication Context
-          │
-          ▼
- [HYDRATION & REST] ────► Maintain Hydration & Record Vitals Daily
-          │
-          ▼
- [DOCTOR CONSULTATION] ──► Schedule Appointment for Clinical Diagnosis
-\`\`\`
+  // Safe fallback for health queries when backend is offline
+  const content = `The JIVEXA AI service is temporarily offline or reconnecting.
 
-#### 📋 Essential Care Steps:
-• **Symptom Monitoring**: Log symptom onset, severity, and duration in your JIVEXA Health Profile.
-• **Medication Safety**: Verify correct dosage and check for potential drug interactions with your pharmacist or doctor.
-• **Hydration & Rest**: Ensure adequate fluid intake and rest while monitoring recovery.
-• **Consult Doctor**: If symptoms persist or worsen, book a consultation with a verified specialist on JIVEXA (\`/doctors\`).`;
+For your question regarding **"${query.trim()}"**, please verify that the backend server is running and try again in a few moments. If you are experiencing concerning or urgent health symptoms, please consult a qualified healthcare professional or visit the nearest clinic.`;
 
   return {
     isEmergency: false,
     text: content,
-    suggestions: ['Book Doctor Consult', 'Order Prescribed Medicines', 'Save to Health Records'],
+    suggestions: [],
     disclaimer: 'Educational healthcare information only.',
-    provider: 'JIVEXA Health AI Bot'
+    provider: 'JIVEXA Health AI'
   };
+};
+
+/**
+ * Conversation History Backend API Services (MongoDB Atlas Synchronization)
+ */
+export const fetchBackendConversations = async (): Promise<any[]> => {
+  try {
+    const apiBase = getApiBaseUrl();
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jivexa_node_jwt_token') : null;
+    if (!token) return [];
+
+    const res = await fetch(`${apiBase}/conversations`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return Array.isArray(data.conversations) ? data.conversations : [];
+    }
+  } catch (err) {
+    console.warn('[AI Client] Failed to fetch conversations from backend:', err);
+  }
+  return [];
+};
+
+export const saveBackendConversation = async (conv: { id: string; title: string; messages: any[] }) => {
+  try {
+    const apiBase = getApiBaseUrl();
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jivexa_node_jwt_token') : null;
+    if (!token) return;
+
+    await fetch(`${apiBase}/conversations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        id: conv.id,
+        title: conv.title,
+        messages: conv.messages
+      })
+    });
+  } catch (err) {
+    console.warn('[AI Client] Failed to save conversation to backend:', err);
+  }
+};
+
+export const deleteBackendConversation = async (id: string) => {
+  try {
+    const apiBase = getApiBaseUrl();
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jivexa_node_jwt_token') : null;
+    if (!token) return;
+
+    await fetch(`${apiBase}/conversations/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+  } catch (err) {
+    console.warn('[AI Client] Failed to delete conversation from backend:', err);
+  }
+};
+
+export const clearAllBackendConversations = async () => {
+  try {
+    const apiBase = getApiBaseUrl();
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jivexa_node_jwt_token') : null;
+    if (!token) return;
+
+    await fetch(`${apiBase}/conversations`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+  } catch (err) {
+    console.warn('[AI Client] Failed to clear conversations from backend:', err);
+  }
 };

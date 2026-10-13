@@ -602,15 +602,15 @@ export const PatientProfileEdit: React.FC = () => {
               <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Database
               </span>
-              <strong style={{ color: 'var(--text-dark)', fontSize: 'var(--font-size-sm)' }}>Supabase PostgreSQL</strong>
+              <strong style={{ color: 'var(--text-dark)', fontSize: 'var(--font-size-sm)' }}>MongoDB Atlas</strong>
             </div>
 
             <div>
               <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
-                Profile Table
+                Profile Collection
               </span>
               <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', color: '#0f172a', fontWeight: 700 }}>
-                public.users
+                users
               </code>
             </div>
 
@@ -627,15 +627,15 @@ export const PatientProfileEdit: React.FC = () => {
               <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
                 Photo Storage
               </span>
-              <strong style={{ color: 'var(--text-dark)', fontSize: 'var(--font-size-sm)' }}>Supabase Storage</strong>
+              <strong style={{ color: 'var(--text-dark)', fontSize: 'var(--font-size-sm)' }}>MongoDB Document</strong>
             </div>
 
             <div>
               <span style={{ color: 'var(--text-light)', fontWeight: 600, display: 'block', marginBottom: '2px', fontSize: 'var(--font-size-xs)', textTransform: 'uppercase' }}>
-                Storage Bucket
+                Storage Location
               </span>
               <code style={{ backgroundColor: '#e2e8f0', padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-xs)', color: '#0f172a', fontWeight: 700 }}>
-                profile-photos
+                avatarUrl (Base64)
               </code>
             </div>
 

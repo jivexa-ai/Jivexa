@@ -1,17 +1,10 @@
-const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
+const { MongoDb } = require('../services/mongoDbService');
 
 // @desc    Create / Issue a new Digital Prescription
 // @route   POST /api/prescriptions
 // @access  Private (Doctor / Admin / Practitioner)
 const createPrescription = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const {
       patientId,
       patientName,
@@ -38,7 +31,7 @@ const createPrescription = async (req, res) => {
     const prescriptionDate = date || new Date().toISOString().split('T')[0];
 
     if (!resolvedPatientName) {
-      const patientUser = await SupabaseDb.users.findById(patientId);
+      const patientUser = await MongoDb.users.findById(patientId);
       if (patientUser) {
         resolvedPatientName = patientUser.name;
       }
@@ -48,7 +41,7 @@ const createPrescription = async (req, res) => {
       resolvedPatientName = 'Patient User';
     }
 
-    const newPrescription = await SupabaseDb.prescriptions.create({
+    const newPrescription = await MongoDb.prescriptions.create({
       patientId: targetPatientId,
       patientName: resolvedPatientName,
       doctorId,
@@ -64,7 +57,7 @@ const createPrescription = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Prescription issued successfully',
-      prescription: newPrescription.toJSON()
+      prescription: newPrescription.toJSON ? newPrescription.toJSON() : newPrescription
     });
   } catch (error) {
     console.error('[Prescription Controller Create Error]:', error);
@@ -80,41 +73,35 @@ const createPrescription = async (req, res) => {
 // @access  Private
 const getPrescriptions = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const userId = req.user._id || req.user.id;
     const userRole = req.user.role;
-
-    const allPres = await SupabaseDb.prescriptions.find();
     const currentUserId = String(userId);
-    let filtered = allPres.filter((pres) => {
-      if (userRole === 'ADMIN' || userRole === 'PHARMACY') return true;
-      if (userRole === 'PATIENT') {
-        return String(pres.patientId) === currentUserId;
-      }
-      if (userRole === 'DOCTOR') {
-        return (
-          String(pres.doctorId) === currentUserId ||
-          (req.user.roleId && pres.doctorId === req.user.roleId) ||
-          pres.doctorName === req.user.name
-        );
-      }
-      return String(pres.patientId) === currentUserId;
-    });
+
+    let filter = {};
+    if (userRole === 'ADMIN' || userRole === 'PHARMACY') {
+      filter = {};
+    } else if (userRole === 'DOCTOR') {
+      filter = {
+        $or: [
+          { doctorId: currentUserId },
+          ...(req.user.roleId ? [{ doctorId: req.user.roleId }] : []),
+          { doctorName: req.user.name }
+        ]
+      };
+    } else {
+      filter = { patientId: currentUserId };
+    }
 
     if (req.query.patientId && (userRole === 'DOCTOR' || userRole === 'PHARMACY' || userRole === 'ADMIN')) {
-      filtered = filtered.filter((p) => String(p.patientId) === String(req.query.patientId));
+      filter.patientId = String(req.query.patientId);
     }
+
+    const prescriptions = await MongoDb.prescriptions.find(filter);
 
     return res.status(200).json({
       success: true,
-      count: filtered.length,
-      prescriptions: filtered.map((p) => p.toJSON())
+      count: prescriptions.length,
+      prescriptions: prescriptions.map((p) => (p.toJSON ? p.toJSON() : p))
     });
   } catch (error) {
     console.error('[Prescription Controller Get Error]:', error);
@@ -130,17 +117,10 @@ const getPrescriptions = async (req, res) => {
 // @access  Private
 const getPrescriptionById = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
 
-    const prescription = await SupabaseDb.prescriptions.findById(id);
+    const prescription = await MongoDb.prescriptions.findById(id);
 
     if (!prescription) {
       return res.status(404).json({
@@ -164,7 +144,7 @@ const getPrescriptionById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      prescription: prescription.toJSON()
+      prescription: prescription.toJSON ? prescription.toJSON() : prescription
     });
   } catch (error) {
     console.error('[Prescription Controller GetById Error]:', error);
@@ -180,18 +160,11 @@ const getPrescriptionById = async (req, res) => {
 // @access  Private
 const updatePrescription = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
     const { status, medications, notes, followUpDate } = req.body;
 
-    const prescription = await SupabaseDb.prescriptions.findById(id);
+    const prescription = await MongoDb.prescriptions.findById(id);
 
     if (!prescription) {
       return res.status(404).json({
@@ -222,7 +195,7 @@ const updatePrescription = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Prescription updated successfully',
-      prescription: prescription.toJSON()
+      prescription: prescription.toJSON ? prescription.toJSON() : prescription
     });
   } catch (error) {
     console.error('[Prescription Controller Update Error]:', error);

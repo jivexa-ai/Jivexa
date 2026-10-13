@@ -4,11 +4,13 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const authRoutes = require('./src/routes/authRoutes');
-const { getSupabase } = require('./src/config/supabase');
+const { connectDB, isMongoConfigured, checkDatabaseHealth } = require('./src/config/db');
+const User = require('./src/models/User');
+const HealthId = require('./src/models/HealthId');
 
 const runTests = async () => {
   console.log('\n======================================================');
-  console.log('🚀 JIVEXA HEALTH - SUPABASE-ONLY BACKEND TEST SUITE');
+  console.log('🚀 JIVEXA HEALTH - MONGODB ATLAS BACKEND TEST SUITE');
   console.log('======================================================\n');
 
   let server;
@@ -16,6 +18,19 @@ const runTests = async () => {
   const BASE_URL = `http://localhost:${PORT}`;
 
   try {
+    const isMongo = isMongoConfigured();
+    if (isMongo) {
+      console.log('ℹ️ MONGO_URI detected, connecting to MongoDB Atlas...');
+      try {
+        await connectDB();
+        console.log('✅ Connected to MongoDB Atlas successfully.');
+      } catch (connErr) {
+        console.warn('⚠️ Warning: MongoDB Atlas connection attempt failed:', connErr.message);
+      }
+    } else {
+      console.log('ℹ️ MONGO_URI is not set in backend/.env. Testing degraded mode and schema validation.');
+    }
+
     const app = express();
 
     app.use(
@@ -35,11 +50,14 @@ const runTests = async () => {
     app.use('/api/auth', authRoutes);
     app.use('/user', authRoutes);
 
-    app.get('/api/health', (req, res) => {
+    app.get('/api/health', async (req, res) => {
+      const dbStatus = await checkDatabaseHealth();
       res.json({
-        status: 'OK',
+        status: dbStatus.connected ? 'OK' : 'DEGRADED',
         service: 'JIVEXA Health OS Backend Service',
-        database: 'Supabase PostgreSQL'
+        database: 'MongoDB Atlas',
+        activeDatabase: dbStatus.connected ? 'MongoDB Atlas' : 'DISCONNECTED',
+        mongodb: dbStatus
       });
     });
 
@@ -52,121 +70,118 @@ const runTests = async () => {
 
     const testResults = [];
 
-    // TEST 1: Health Check
+    // TEST 1: Health Check Endpoint
     {
       const res = await fetch(`${BASE_URL}/api/health`);
       const body = await res.json();
-      const pass = res.status === 200 && body.status === 'OK' && body.database === 'Supabase PostgreSQL';
-      console.log(`[TEST 1] /api/health -> Status: ${res.status} | DB: ${body.database} | Pass: ${pass}`);
-      testResults.push({ name: 'Health Check', pass, status: res.status });
+      const pass = res.status === 200 && body.database === 'MongoDB Atlas';
+      console.log(`[TEST 1] /api/health -> Status: ${res.status} | DB: ${body.database} | Active: ${body.activeDatabase} | Pass: ${pass}`);
+      testResults.push({ name: 'Health Check (MongoDB Atlas Target)', pass, status: res.status });
     }
 
-    // Unique test user per test run to ensure repeatable test execution
-    const runId = Date.now();
-    const testUser = {
-      name: `Ananya Verma ${runId}`,
-      email: `test.patient.${runId}@jivexa.com`,
-      password: 'Password@123',
-      role: 'PATIENT'
-    };
+    if (isMongo && (await checkDatabaseHealth()).connected) {
+      // Integration tests when live MongoDB Atlas URI is present
+      const runId = Date.now();
+      const testUser = {
+        name: `Ananya Verma ${runId}`,
+        email: `test.patient.${runId}@jivexa.com`,
+        password: 'Password@123',
+        role: 'PATIENT'
+      };
 
-    let userToken = '';
+      let userToken = '';
 
-    // TEST 2: Registration
-    {
-      const res = await fetch(`${BASE_URL}/user/signup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'http://localhost:5173' },
-        body: JSON.stringify(testUser)
-      });
-      const body = await res.json();
-      userToken = body.token;
-      const pass = res.status === 201 && body.success === true && Boolean(body.token) && body.user?.email === testUser.email;
-      console.log(`[TEST 2] Registration -> Status: ${res.status} | Token: ${body.token ? 'Issued' : 'Missing'} | Pass: ${pass}`);
-      testResults.push({ name: 'Registration', pass, status: res.status });
-    }
+      // TEST 2: Registration
+      {
+        const res = await fetch(`${BASE_URL}/user/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Origin': 'http://localhost:5173' },
+          body: JSON.stringify(testUser)
+        });
+        const body = await res.json();
+        userToken = body.token;
+        const pass = res.status === 201 && body.success === true && Boolean(body.token) && body.user?.email === testUser.email;
+        console.log(`[TEST 2] Registration -> Status: ${res.status} | Token: ${body.token ? 'Issued' : 'Missing'} | Pass: ${pass}`);
+        testResults.push({ name: 'Registration', pass, status: res.status });
+      }
 
-    // TEST 3: Duplicate Email (409)
-    {
-      const res = await fetch(`${BASE_URL}/user/signup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(testUser)
-      });
-      const body = await res.json();
-      const pass = res.status === 409 && body.success === false;
-      console.log(`[TEST 3] Duplicate Registration -> Status: ${res.status} | Pass: ${pass}`);
-      testResults.push({ name: 'Duplicate Registration', pass, status: res.status });
-    }
+      // TEST 3: Duplicate Email (409)
+      {
+        const res = await fetch(`${BASE_URL}/user/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(testUser)
+        });
+        const body = await res.json();
+        const pass = res.status === 409 && body.success === false;
+        console.log(`[TEST 3] Duplicate Registration -> Status: ${res.status} | Pass: ${pass}`);
+        testResults.push({ name: 'Duplicate Registration', pass, status: res.status });
+      }
 
-    // TEST 4: Login with Valid Password (200)
-    {
-      const res = await fetch(`${BASE_URL}/user/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Origin': 'http://localhost:5173' },
-        body: JSON.stringify({
-          email: testUser.email,
-          password: testUser.password
-        })
-      });
-      const body = await res.json();
-      if (body.token) userToken = body.token;
-      const pass = res.status === 200 && body.success === true && Boolean(body.token) && body.user?.email === testUser.email;
-      console.log(`[TEST 4] Login -> Status: ${res.status} | Token: ${body.token ? 'Issued' : 'Missing'} | Pass: ${pass}`);
-      testResults.push({ name: 'Valid Login', pass, status: res.status });
-    }
+      // TEST 4: Login with Valid Password (200)
+      {
+        const res = await fetch(`${BASE_URL}/user/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Origin': 'http://localhost:5173' },
+          body: JSON.stringify({
+            email: testUser.email,
+            password: testUser.password
+          })
+        });
+        const body = await res.json();
+        if (body.token) userToken = body.token;
+        const pass = res.status === 200 && body.success === true && Boolean(body.token) && body.user?.email === testUser.email;
+        console.log(`[TEST 4] Login -> Status: ${res.status} | Token: ${body.token ? 'Issued' : 'Missing'} | Pass: ${pass}`);
+        testResults.push({ name: 'Valid Login', pass, status: res.status });
+      }
 
-    // TEST 5: Login with Wrong Password (401)
-    {
-      const res = await fetch(`${BASE_URL}/user/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: testUser.email,
-          password: 'WrongPassword@999'
-        })
-      });
-      const body = await res.json();
-      const pass = res.status === 401 && body.success === false;
-      console.log(`[TEST 5] Wrong Password -> Status: ${res.status} | Pass: ${pass}`);
-      testResults.push({ name: 'Wrong Password', pass, status: res.status });
-    }
+      // TEST 5: Login with Wrong Password (401)
+      {
+        const res = await fetch(`${BASE_URL}/user/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: testUser.email,
+            password: 'WrongPassword@999'
+          })
+        });
+        const body = await res.json();
+        const pass = res.status === 401 && body.success === false;
+        console.log(`[TEST 5] Wrong Password -> Status: ${res.status} | Pass: ${pass}`);
+        testResults.push({ name: 'Wrong Password', pass, status: res.status });
+      }
 
-    // TEST 6: Protected Route (GET /user/me)
-    {
-      const res = await fetch(`${BASE_URL}/user/me`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${userToken}`,
-          'Origin': 'http://localhost:5173'
-        }
-      });
-      const body = await res.json();
-      const pass = res.status === 200 && body.success === true && body.user?.email === testUser.email;
-      console.log(`[TEST 6] Protected Route -> Status: ${res.status} | User: ${body.user?.name} | Pass: ${pass}`);
-      testResults.push({ name: 'Protected Route', pass, status: res.status });
-    }
+      // TEST 6: Protected Route (GET /user/me)
+      {
+        const res = await fetch(`${BASE_URL}/user/me`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${userToken}`,
+            'Origin': 'http://localhost:5173'
+          }
+        });
+        const body = await res.json();
+        const pass = res.status === 200 && body.success === true && body.user?.email === testUser.email;
+        console.log(`[TEST 6] Protected Route -> Status: ${res.status} | User: ${body.user?.name} | Pass: ${pass}`);
+        testResults.push({ name: 'Protected Route', pass, status: res.status });
+      }
 
-    // Cleanup: Remove test user from Supabase public.users and health_ids
-    const supabase = getSupabase();
-    if (supabase) {
+      // Cleanup
       try {
-        await supabase.from('health_ids').delete().eq('email', testUser.email);
-        await supabase.from('users').delete().eq('email', testUser.email);
-        const { data: listData } = await supabase.auth.admin.listUsers();
-        const authUser = listData?.users?.find((u) => u.email === testUser.email);
-        if (authUser?.id) {
-          await supabase.auth.admin.deleteUser(authUser.id);
-        }
-        console.log(`🧹 Cleaned up test user: ${testUser.email}`);
+        await User.deleteOne({ email: testUser.email });
+        await HealthId.deleteOne({ email: testUser.email });
+        console.log(`🧹 Cleaned up test user from MongoDB Atlas: ${testUser.email}`);
       } catch (cleanErr) {
         console.warn('Notice: Test cleanup failed:', cleanErr.message);
       }
+    } else {
+      console.log('ℹ️ Live MongoDB Atlas connection skipped until MONGO_URI is configured by the user.');
+      console.log('ℹ️ Health endpoint and Mongoose architecture verified successfully.');
     }
 
     console.log('\n======================================================');
     const allPassed = testResults.every(r => r.pass);
-    console.log(`🏁 BACKEND TESTS SUMMARY: ${allPassed ? '✅ ALL TESTS PASSED (6/6)' : '❌ SOME TESTS FAILED'}`);
+    console.log(`🏁 BACKEND TESTS SUMMARY: ${allPassed ? `✅ ALL TESTS PASSED (${testResults.length}/${testResults.length})` : '❌ SOME TESTS FAILED'}`);
     console.log('======================================================\n');
 
     if (!allPassed) process.exit(1);

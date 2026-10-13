@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 
-const { checkSupabaseHealth, isSupabaseConfigured } = require('./config/supabase');
+const { connectDB, isMongoConfigured, checkDatabaseHealth } = require('./config/db');
 
 const app = express();
 
@@ -49,22 +49,22 @@ app.use('/api/ai', require('./routes/aiRoutes'));
 
 // System Health Check Endpoint
 app.get('/api/health', async (req, res) => {
-  const isSupa = isSupabaseConfigured();
-  let supabaseStatus = { configured: false, connected: false };
-  if (isSupa) {
-    try {
-      supabaseStatus = { configured: true, ...(await checkSupabaseHealth()) };
-    } catch (e) {
-      supabaseStatus = { configured: true, connected: false, error: e.message };
-    }
+  const isMongo = isMongoConfigured();
+  let dbStatus = { configured: isMongo, connected: false };
+  try {
+    dbStatus = await checkDatabaseHealth();
+  } catch (e) {
+    dbStatus = { configured: isMongo, connected: false, error: e.message };
   }
 
   res.json({
-    status: isSupa && supabaseStatus.connected ? 'OK' : 'DEGRADED',
+    status: dbStatus.connected ? 'OK' : 'DEGRADED',
     service: 'JIVEXA Health OS Backend Service',
-    database: 'Supabase PostgreSQL',
-    activeDatabase: isSupa && supabaseStatus.connected ? 'Supabase' : (isSupa ? 'Supabase (Unreachable)' : 'DISCONNECTED'),
-    authProvider: 'Supabase Auth',
+    database: 'MongoDB Atlas',
+    activeDatabase: dbStatus.connected
+      ? 'MongoDB Atlas'
+      : (isMongo ? 'MongoDB Atlas (Unreachable)' : 'DISCONNECTED'),
+    authProvider: 'Native JWT / MongoDB Auth',
     // TEMPORARILY DISABLED FOR LAUNCH
     // Re-enable OTP after launch by setting OTP_ENABLED=true in backend/.env.
     otp: {
@@ -78,7 +78,7 @@ app.get('/api/health', async (req, res) => {
       activeModules: [
         'PATIENT_SIGNUP',
         'PATIENT_LOGIN',
-        'SUPABASE_EMAIL_VERIFICATION',
+        'EMAIL_VERIFICATION',
         'PATIENT_DASHBOARD',
         'PATIENT_PROFILE',
         'AI_HEALTH_REPORT_ANALYZER',
@@ -93,7 +93,7 @@ app.get('/api/health', async (req, res) => {
         { name: 'Hospital & Healthcare Ecosystem Admin', version: 'V5', status: 'COMING_SOON' }
       ]
     },
-    supabase: supabaseStatus,
+    mongodb: dbStatus,
     timestamp: new Date().toISOString()
   });
 });
@@ -102,6 +102,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'OK',
     service: 'JIVEXA Health OS Backend Service',
+    database: 'MongoDB Atlas',
     timestamp: new Date().toISOString()
   });
 });
@@ -120,30 +121,16 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 const startServer = async () => {
   try {
-    // 1. Supabase Initialization check on startup (SOLE DATABASE)
-    if (isSupabaseConfigured()) {
-      console.log('[Supabase] Credentials detected in backend environment.');
-      checkSupabaseHealth()
-        .then((health) => {
-          if (health.connected && health.tablePermission === 'GRANTED') {
-            console.log('[Supabase] PostgreSQL database connected successfully.');
-          } else if (health.connected) {
-            console.log(
-              `[Supabase] PostgreSQL connection reached (${health.tablePermission || 'Active'}). Notice: ${
-                health.error || health.message
-              }`
-            );
-          } else {
-            console.warn('[Supabase] Health probe notice:', health.error || health.message);
-          }
-        })
-        .catch((e) => {
-          console.warn('[Supabase] Initialization probe notice:', e.message);
-        });
+    // 1. Connect to MongoDB Atlas
+    if (isMongoConfigured()) {
+      console.log('[MongoDB] URI detected in backend environment. Connecting to MongoDB Atlas...');
+      try {
+        await connectDB();
+      } catch (err) {
+        console.warn('[MongoDB] Initial connection error on startup:', err.message);
+      }
     } else {
-      console.error(
-        '[Supabase] FATAL ERROR: Supabase is NOT configured. Jivexa Health OS requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.'
-      );
+      console.warn('[MongoDB] MONGO_URI is not set in backend/.env. Server will run in degraded mode until configured.');
     }
 
     // 2. Start Express server and attach error listeners explicitly on 0.0.0.0

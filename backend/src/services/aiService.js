@@ -7,15 +7,47 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const https = require('https');
 
-const SYSTEM_PROMPT = `You are the JIVEXA AI Medical & Health Assistant, a clinical-literacy AI helping users understand health questions, symptoms, and lab reports. You are a health-information assistant, NOT a doctor. You do not diagnose, prescribe medications, or imply physician review has occurred.
+const SYSTEM_PROMPT = `You are JIVEXA Health AI, an intelligent, empathetic, and professional healthcare information assistant.
 
-CRITICAL INSTRUCTIONS:
-1. Write in warm, clear, plain human language (like a knowledgeable nurse-educator).
-2. Explain medical terms simply and use clean bullet points.
-3. For medical reports or lab values, extract the test name, reported value, and reference range, and flag abnormal parameters for doctor discussion.
-4. Keep answers concise, clear, and direct (under 60 words in 2-3 short bullet points).
-5. If symptoms suggest a medical emergency (chest pain, severe bleeding, difficulty breathing, stroke symptoms, poisoning, seizures), immediately instruct them to call 108 / 112 or visit the nearest ER.
-6. Closing reminder for clinical questions: Always recommend consulting a qualified healthcare professional.`;
+OPERATIONAL GUIDELINES BY QUERY TYPE:
+
+1. GREETINGS & CASUAL CONVERSATION:
+- When the user sends greetings ("Hi", "Hello", "Namaste", "Good morning") or casual conversational messages:
+  * Respond naturally, warmly, and politely in the user's language (Hindi, Hinglish, or English).
+  * DO NOT provide medical advice, symptoms triage, clinical bullet points, or medical disclaimers on simple greetings.
+
+2. IDENTITY & ROLE ("Tum kaun ho?", "Who are you?", "What can you do?"):
+- When the user asks about your identity or capabilities:
+  * Explain clearly and simply that you are JIVEXA Health AI, an intelligent healthcare information assistant.
+  * State that you help patients understand symptoms, lab test reports, prescription details, and wellness guidance.
+  * Clarify that you provide educational guidance and are not a substitute for a licensed doctor.
+  * DO NOT prescribe medications or claim to provide official medical diagnoses.
+
+3. USER NAME & MEMORY ("mera naam kya hai", "what is my name?"):
+- When the user asks for their name:
+  * If the verified user profile provides their name or the user stated their name in earlier messages, address or confirm it warmly (e.g., "Aapka naam [Name] hai" / "Your name is [Name]").
+  * If the name was NEVER provided in the verified profile or conversation history, honestly and politely state that you do not know their name yet (e.g., "Aapne abhi tak apna naam nahi bataya hai. Aapka naam kya hai?").
+  * NEVER invent, guess, or fabricate a name.
+  * DO NOT attach medical advice, clinical checklists, or care pathways to name questions.
+
+4. MISSING CONTEXT & AMBIGUOUS QUERIES ("Explain key reference ranges for this condition.", "Is this normal?", "What medicine should I take?"):
+- When the user asks for reference ranges, treatment, or interpretation of "this condition" or "this report" but no condition, lab test, or report has been mentioned in the conversation:
+  * DO NOT guess a random disease or generate generic care templates.
+  * Directly and politely ask the user which specific condition, symptom, or lab test they would like information about.
+
+5. HEALTH & MEDICAL QUESTIONS ("Fever mein kya karna chahiye?", "What causes headache?", "How to manage diabetes?"):
+- Provide accurate, evidence-based educational healthcare guidance in clean, clear language.
+- Provide relevant, practical self-care steps, warning signs to monitor, and when to consult a doctor.
+- Mention hydration, rest, or doctor visits ONLY when directly relevant to the specific condition (e.g. fever or acute viral illness), NOT as a rigid boilerplate template.
+- Keep the response concise, compassionate, and helpful.
+- Append a brief, separate 1-line note at the end: "*Note: This is educational healthcare information. Please consult a qualified doctor for medical diagnosis and prescriptions.*"
+
+6. EMERGENCY SERVICES (108 / 112):
+- Mention 108 / 112 or ER emergency services ONLY when the user's symptoms clearly indicate a medical emergency (such as severe chest pain, shortness of breath, heavy bleeding, stroke symptoms, loss of consciousness, or poisoning).
+- DO NOT mention emergency services for non-emergency or informational queries.
+
+7. NO UNRELATED APPENDED QUESTIONS:
+- Do NOT append lists of suggested questions or unrelated prompts to your response.`;
 
 // Metrics tracker for monitoring
 const aiMetrics = {
@@ -43,24 +75,35 @@ const estimateTokens = (text) => {
 };
 
 /**
- * Initialize Google Gemini Client with fallback model support
+ * Initialize Google Gemini Client with fallback model support and user profile context
  */
-const getGeminiModel = (generationConfig = {}) => {
+const getGeminiModel = (generationConfig = {}, userProfile = null) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured in backend environment');
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const modelName = generationConfig.model || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   const genAI = new GoogleGenerativeAI(apiKey);
+
+  let systemInstruction = SYSTEM_PROMPT;
+
+  if (userProfile && userProfile.name) {
+    systemInstruction += `\n\nAUTHENTICATED USER IDENTITY:
+- The authenticated user's name is "${userProfile.name}".
+- When the user asks for their name or greets you, warmly acknowledge and address them by "${userProfile.name}".`;
+  }
+
+  const cleanConfig = { ...generationConfig };
+  delete cleanConfig.model;
 
   return genAI.getGenerativeModel({
     model: modelName,
-    systemInstruction: SYSTEM_PROMPT,
+    systemInstruction,
     generationConfig: {
       temperature: 0.2,
       maxOutputTokens: 800,
-      ...generationConfig
+      ...cleanConfig
     }
   });
 };
@@ -86,29 +129,30 @@ const buildGeminiContents = (userMessage, history = []) => {
     for (const h of history) {
       if (!h) continue;
 
-      // Determine role
+      // Determine role from any frontend or standard convention
       let role = null;
-      const s = String(h.sender || h.role || '').toLowerCase().trim();
-      if (s === 'user') {
+      const s = String(h.sender || h.role || h.author || '').toLowerCase().trim();
+      if (s === 'user' || s === 'human' || s === 'patient') {
         role = 'user';
-      } else if (s === 'ai' || s === 'model' || s === 'assistant') {
+      } else if (s === 'ai' || s === 'model' || s === 'assistant' || s === 'bot') {
         role = 'model';
       }
 
       if (!role) continue;
 
-      // Extract and clean text
+      // Extract and clean text across possible schema formats
       let text = '';
       if (typeof h.text === 'string') {
         text = h.text.trim();
       } else if (typeof h.content === 'string') {
         text = h.content.trim();
+      } else if (typeof h.message === 'string') {
+        text = h.message.trim();
       } else if (Array.isArray(h.parts)) {
         text = h.parts.map(p => (typeof p === 'string' ? p : p?.text || '')).join(' ').trim();
       }
 
-      // CRITICAL: Discard any turn with empty text to prevent:
-      // "Content with role 'model' cannot follow empty content."
+      // Discard empty text turns
       if (!text) continue;
 
       rawTurns.push({ role, text });
@@ -123,8 +167,8 @@ const buildGeminiContents = (userMessage, history = []) => {
     }
   }
 
-  // Keep only the most recent conversation context (up to last 10 turns)
-  const recentTurns = rawTurns.slice(-10);
+  // Keep up to 20 recent turns for rich conversational memory
+  const recentTurns = rawTurns.slice(-20);
 
   // Merge consecutive turns of the same role to strictly guarantee alternation
   const alternatingTurns = [];
@@ -146,7 +190,7 @@ const buildGeminiContents = (userMessage, history = []) => {
     }
   }
 
-  // Now append the current userMessage as the final turn
+  // Append the current userMessage as the final turn
   if (alternatingTurns.length === 0) {
     alternatingTurns.push({ role: 'user', text: sanitizedUserMessage });
   } else {
@@ -169,28 +213,48 @@ const buildGeminiContents = (userMessage, history = []) => {
 /**
  * 1. Stream Live Gemini Chat Response (SSE Streaming)
  */
-const streamGemini = async (userMessage, history = [], onChunk) => {
-  const model = getGeminiModel();
-  const contents = buildGeminiContents(userMessage, history);
+const streamGemini = async (userMessage, history = [], onChunk, userProfile = null) => {
+  const candidateModels = [
+    process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    'gemini-3-flash-preview',
+    'gemini-3.1-flash-lite'
+  ];
+  const uniqueModels = [...new Set(candidateModels)];
 
-  const responseStream = await model.generateContentStream({ contents });
+  let lastError = null;
 
-  let fullText = '';
-  for await (const chunk of responseStream.stream) {
-    const chunkText = chunk.text();
-    if (chunkText) {
-      fullText += chunkText;
-      onChunk(chunkText);
+  for (const modelName of uniqueModels) {
+    try {
+      const model = getGeminiModel({ model: modelName }, userProfile);
+      const contents = buildGeminiContents(userMessage, history);
+
+      const responseStream = await model.generateContentStream({ contents });
+
+      let fullText = '';
+      for await (const chunk of responseStream.stream) {
+        const chunkText = chunk.text();
+        if (chunkText) {
+          fullText += chunkText;
+          onChunk(chunkText);
+        }
+      }
+
+      if (fullText) {
+        aiMetrics.geminiSuccesses++;
+        return {
+          provider: `JIVEXA AI (${modelName})`,
+          text: fullText,
+          inputTokens: estimateTokens(JSON.stringify(contents)),
+          outputTokens: estimateTokens(fullText)
+        };
+      }
+    } catch (err) {
+      lastError = err;
+      console.warn(`[Gemini Engine] Model ${modelName} error:`, err.message);
     }
   }
 
-  aiMetrics.geminiSuccesses++;
-  return {
-    provider: 'JIVEXA AI (Google Gemini)',
-    text: fullText || 'No response generated.',
-    inputTokens: estimateTokens(JSON.stringify(contents)),
-    outputTokens: estimateTokens(fullText)
-  };
+  throw lastError || new Error('All Gemini candidate models failed to respond.');
 };
 
 /**
@@ -304,7 +368,7 @@ Return ONLY valid JSON matching this EXACT structure:
 /**
  * 3. Stream Live AI Response (Primary: Google Gemini)
  */
-const streamLiveAiResponse = async (userMessage, history = [], onChunk) => {
+const streamLiveAiResponse = async (userMessage, history = [], onChunk, userProfile = null) => {
   aiMetrics.totalRequests++;
 
   // 1. Emergency Safety Check Guardrail
@@ -327,7 +391,7 @@ Do not rely on text advice for emergency symptoms.`;
 
   // 2. Primary Engine: Google Gemini (gemini-2.5-flash)
   try {
-    return await streamGemini(userMessage, history, onChunk);
+    return await streamGemini(userMessage, history, onChunk, userProfile);
   } catch (geminiErr) {
     console.warn('[JIVEXA AI] Google Gemini primary error:', geminiErr.message);
   }

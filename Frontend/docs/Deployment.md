@@ -3,7 +3,7 @@
 ## 1. Prerequisites
 - Node.js >= 18.x
 - npm >= 9.x
-- Supabase PostgreSQL (Project URL & Service Role Key)
+- MongoDB Atlas (Connection String URI)
 
 ## 2. Environment Variables
 
@@ -11,8 +11,7 @@
 ```env
 PORT=4000
 NODE_ENV=production
-SUPABASE_URL=https://<PROJECT-ID>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<YOUR-SERVICE-ROLE-KEY>
+MONGO_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/jivexa?retryWrites=true&w=majority
 JWT_SECRET=your_jwt_secret_key_here
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash

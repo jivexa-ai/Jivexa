@@ -1,17 +1,10 @@
-const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
+const { MongoDb } = require('../services/mongoDbService');
 
 // @desc    Create a new Ambulance / Emergency Request
 // @route   POST /api/ambulance/requests
 // @access  Private (Authenticated Patient / User)
 const createAmbulanceRequest = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const {
       ambulanceType = 'ICU',
       pickupAddress,
@@ -47,7 +40,7 @@ const createAmbulanceRequest = async (req, res) => {
     const resolvedDriverPhone = driverPhone || '+91 98765 43210';
     const initialStatus = 'Accepted';
 
-    const newRequest = await SupabaseDb.ambulanceRequests.create({
+    const newRequest = await MongoDb.ambulanceRequests.create({
       patientId,
       patientName,
       patientPhone,
@@ -72,8 +65,8 @@ const createAmbulanceRequest = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Ambulance dispatched successfully',
-      request: newRequest.toJSON(),
-      booking: newRequest.toJSON()
+      request: newRequest.toJSON ? newRequest.toJSON() : newRequest,
+      booking: newRequest.toJSON ? newRequest.toJSON() : newRequest
     });
   } catch (error) {
     console.error('[Ambulance Controller Create Error]:', error);
@@ -89,22 +82,15 @@ const createAmbulanceRequest = async (req, res) => {
 // @access  Private
 const getAmbulanceRequests = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const userId = req.user._id || req.user.id;
     const userRole = req.user.role;
     const currentUserId = String(userId);
 
     let requests = [];
     if (userRole === 'PATIENT') {
-      requests = await SupabaseDb.ambulanceRequests.find({ patientId: userId });
+      requests = await MongoDb.ambulanceRequests.find({ patientId: currentUserId });
     } else if (userRole === 'AMBULANCE_PARTNER') {
-      const all = await SupabaseDb.ambulanceRequests.find({});
+      const all = await MongoDb.ambulanceRequests.find({});
       requests = all.filter((r) => {
         return (
           String(r.ambulanceId) === currentUserId ||
@@ -114,14 +100,14 @@ const getAmbulanceRequests = async (req, res) => {
         );
       });
     } else {
-      requests = await SupabaseDb.ambulanceRequests.find({});
+      requests = await MongoDb.ambulanceRequests.find({});
     }
 
     return res.status(200).json({
       success: true,
       count: requests.length,
-      requests: requests.map((r) => r.toJSON()),
-      bookings: requests.map((r) => r.toJSON())
+      requests: requests.map((r) => (r.toJSON ? r.toJSON() : r)),
+      bookings: requests.map((r) => (r.toJSON ? r.toJSON() : r))
     });
   } catch (error) {
     console.error('[Ambulance Controller Get Error]:', error);
@@ -137,18 +123,11 @@ const getAmbulanceRequests = async (req, res) => {
 // @access  Private
 const getAmbulanceRequestById = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
     const userRole = req.user.role;
 
-    const request = await SupabaseDb.ambulanceRequests.findById(id);
+    const request = await MongoDb.ambulanceRequests.findById(id);
     if (!request) {
       return res.status(404).json({
         success: false,
@@ -171,8 +150,8 @@ const getAmbulanceRequestById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      request: request.toJSON(),
-      booking: request.toJSON()
+      request: request.toJSON ? request.toJSON() : request,
+      booking: request.toJSON ? request.toJSON() : request
     });
   } catch (error) {
     console.error('[Ambulance Controller GetById Error]:', error);
@@ -188,19 +167,12 @@ const getAmbulanceRequestById = async (req, res) => {
 // @access  Private
 const updateAmbulanceRequest = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
     const userRole = req.user.role;
     const { status, ambulanceId, vehicleNumber, driverName, driverPhone } = req.body;
 
-    const request = await SupabaseDb.ambulanceRequests.findById(id);
+    const request = await MongoDb.ambulanceRequests.findById(id);
     if (!request) {
       return res.status(404).json({
         success: false,
@@ -243,8 +215,8 @@ const updateAmbulanceRequest = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Ambulance request updated successfully',
-      request: request.toJSON(),
-      booking: request.toJSON()
+      request: request.toJSON ? request.toJSON() : request,
+      booking: request.toJSON ? request.toJSON() : request
     });
   } catch (error) {
     console.error('[Ambulance Controller Update Error]:', error);

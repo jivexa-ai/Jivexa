@@ -1,6 +1,8 @@
 const jwt = require('jsonwebtoken');
-const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
-const { getSupabase } = require('../config/supabase');
+const User = require('../models/User');
+const { isDatabaseConnected } = require('../config/db');
+
+const JWT_FALLBACK_SECRET = 'jivexa_health_jwt_secret_key_2026_super_secure_auth_token_string';
 
 const protect = async (req, res, next) => {
   let token;
@@ -22,43 +24,35 @@ const protect = async (req, res, next) => {
     });
   }
 
-  if (!isSupabaseConfigured()) {
-    return res.status(500).json({
-      success: false,
-      message: 'Database service is currently unconfigured. Supabase PostgreSQL is required.'
-    });
-  }
-
   try {
-    const secretKey = process.env.JWT_SECRET || 'jivexa_health_jwt_secret_key_2026_super_secure_auth_token_string';
-    let decoded = null;
+    const secretKey = process.env.JWT_SECRET || JWT_FALLBACK_SECRET;
+    const decoded = jwt.verify(token, secretKey);
 
-    try {
-      decoded = jwt.verify(token, secretKey);
-    } catch (jwtErr) {
-      // If application JWT verification fails, check Supabase Auth access token
-      const client = getSupabase();
-      if (client) {
-        const { data: { user: authUser }, error } = await client.auth.getUser(token);
-        if (authUser && !error) {
-          decoded = { id: authUser.id, email: authUser.email };
-        }
-      }
-      if (!decoded) throw jwtErr;
+    if (!decoded || (!decoded.id && !decoded.email)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token payload',
+        error: 'Invalid token'
+      });
     }
 
-    let user = await SupabaseDb.users.findById(decoded.id);
+    // Lookup user in MongoDB
+    let user = null;
+    if (decoded.id) {
+      user = await User.findOne({ _id: String(decoded.id) });
+    }
     if (!user && decoded.email) {
-      user = await SupabaseDb.users.findOne({ email: decoded.email });
+      user = await User.findOne({ email: String(decoded.email).toLowerCase().trim() });
     }
+
     if (!user) {
       return res.status(404).json({
         success: false,
         message: 'User associated with this token no longer exists'
       });
     }
-    req.user = user;
 
+    req.user = user;
     next();
   } catch (error) {
     console.error('[Auth Middleware Verification Error]:', error.message);
@@ -67,6 +61,46 @@ const protect = async (req, res, next) => {
       message: 'Authentication session expired or invalid. Please login again.',
       error: error.message
     });
+  }
+};
+
+// Optional auth middleware (identifies user if token is present, does not block if not)
+const optionalProtect = async (req, res, next) => {
+  let token;
+
+  if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  try {
+    const secretKey = process.env.JWT_SECRET || JWT_FALLBACK_SECRET;
+    const decoded = jwt.verify(token, secretKey);
+
+    if (!decoded || (!decoded.id && !decoded.email)) {
+      req.user = null;
+      return next();
+    }
+
+    let user = null;
+    if (decoded.id) {
+      user = await User.findOne({ _id: String(decoded.id) });
+    }
+    if (!user && decoded.email) {
+      user = await User.findOne({ email: String(decoded.email).toLowerCase().trim() });
+    }
+
+    req.user = user || null;
+    next();
+  } catch (error) {
+    req.user = null;
+    next();
   }
 };
 
@@ -85,5 +119,6 @@ const authorize = (...roles) => {
 
 module.exports = {
   protect,
+  optionalProtect,
   authorize
 };

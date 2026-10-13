@@ -1,17 +1,10 @@
-const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
+const { MongoDb } = require('../services/mongoDbService');
 
 // @desc    Create / Book a new Appointment
 // @route   POST /api/appointments
 // @access  Private (Authenticated Patient / Doctor)
 const createAppointment = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const {
       doctorId,
       doctorName,
@@ -36,7 +29,7 @@ const createAppointment = async (req, res) => {
     let resolvedSpecialty = doctorSpecialty || 'General Medicine';
 
     if (!resolvedDoctorName) {
-      const docUser = await SupabaseDb.users.findById(doctorId);
+      const docUser = await MongoDb.users.findById(doctorId);
       if (docUser) {
         resolvedDoctorName = docUser.name;
         resolvedSpecialty = docUser.professionalDetails?.specialty || resolvedSpecialty;
@@ -47,7 +40,7 @@ const createAppointment = async (req, res) => {
       resolvedDoctorName = 'Medical Specialist';
     }
 
-    const newAppointment = await SupabaseDb.appointments.create({
+    const newAppointment = await MongoDb.appointments.create({
       patientId,
       patientName,
       doctorId: String(doctorId),
@@ -79,35 +72,32 @@ const createAppointment = async (req, res) => {
 // @access  Private
 const getAppointments = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const userId = req.user._id || req.user.id;
     const userRole = req.user.role;
-
-    const allAppts = await SupabaseDb.appointments.find();
     const currentUserId = String(userId);
-    const filtered = allAppts.filter((appt) => {
-      if (userRole === 'ADMIN') return true;
-      if (userRole === 'PATIENT') return String(appt.patientId) === currentUserId;
-      if (userRole === 'DOCTOR') {
-        return (
-          String(appt.doctorId) === currentUserId ||
-          (req.user.roleId && appt.doctorId === req.user.roleId) ||
-          appt.doctorName === req.user.name
-        );
-      }
-      return String(appt.patientId) === currentUserId;
-    });
+
+    let filter = {};
+    if (userRole === 'ADMIN') {
+      filter = {};
+    } else if (userRole === 'DOCTOR') {
+      filter = {
+        $or: [
+          { doctorId: currentUserId },
+          ...(req.user.roleId ? [{ doctorId: req.user.roleId }] : []),
+          { doctorName: req.user.name }
+        ]
+      };
+    } else {
+      // Default to PATIENT
+      filter = { patientId: currentUserId };
+    }
+
+    const appointments = await MongoDb.appointments.find(filter);
 
     return res.status(200).json({
       success: true,
-      count: filtered.length,
-      appointments: filtered.map((a) => a.toJSON())
+      count: appointments.length,
+      appointments: appointments.map((a) => (a.toJSON ? a.toJSON() : a))
     });
   } catch (error) {
     console.error('[Appointment Controller Get Error]:', error);
@@ -123,17 +113,10 @@ const getAppointments = async (req, res) => {
 // @access  Private
 const getAppointmentById = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
 
-    const appointment = await SupabaseDb.appointments.findById(id);
+    const appointment = await MongoDb.appointments.findById(id);
     if (!appointment) {
       return res.status(404).json({
         success: false,
@@ -156,7 +139,7 @@ const getAppointmentById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      appointment: appointment.toJSON()
+      appointment: appointment.toJSON ? appointment.toJSON() : appointment
     });
   } catch (error) {
     console.error('[Appointment Controller GetById Error]:', error);
@@ -172,18 +155,11 @@ const getAppointmentById = async (req, res) => {
 // @access  Private
 const updateAppointment = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
     const { status, date, time, notes, consultationSummary, consultationType } = req.body;
 
-    const appointment = await SupabaseDb.appointments.findById(id);
+    const appointment = await MongoDb.appointments.findById(id);
     if (!appointment) {
       return res.status(404).json({
         success: false,
@@ -216,7 +192,7 @@ const updateAppointment = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Appointment updated successfully',
-      appointment: appointment.toJSON()
+      appointment: appointment.toJSON ? appointment.toJSON() : appointment
     });
   } catch (error) {
     console.error('[Appointment Controller Update Error]:', error);
@@ -232,17 +208,10 @@ const updateAppointment = async (req, res) => {
 // @access  Private
 const deleteAppointment = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
 
-    const appointment = await SupabaseDb.appointments.findById(id);
+    const appointment = await MongoDb.appointments.findById(id);
     if (!appointment) {
       return res.status(404).json({
         success: false,
@@ -269,7 +238,7 @@ const deleteAppointment = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Appointment cancelled successfully',
-      appointment: appointment.toJSON()
+      appointment: appointment.toJSON ? appointment.toJSON() : appointment
     });
   } catch (error) {
     console.error('[Appointment Controller Delete Error]:', error);

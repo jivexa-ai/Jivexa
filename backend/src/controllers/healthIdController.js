@@ -1,4 +1,4 @@
-const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
+const { MongoDb } = require('../services/mongoDbService');
 
 // Helper to generate a canonical Health ID: JIV-2026-XXXXXX
 const generateRandomId = () => {
@@ -54,7 +54,7 @@ const DEMO_HEALTH_IDS = [
   }
 ];
 
-// Server-side unique Health ID generator with Supabase collision prevention
+// Server-side unique Health ID generator with MongoDB collision prevention
 const generateUniqueHealthId = async () => {
   let isUnique = false;
   let newHealthId = '';
@@ -64,12 +64,8 @@ const generateUniqueHealthId = async () => {
     newHealthId = generateRandomId();
     attempts++;
 
-    if (isSupabaseConfigured()) {
-      const existing = await SupabaseDb.healthIds.findOne({ healthId: newHealthId });
-      if (!existing) {
-        isUnique = true;
-      }
-    } else {
+    const existing = await MongoDb.healthIds.findOne({ healthId: newHealthId });
+    if (!existing) {
       isUnique = true;
     }
   }
@@ -98,21 +94,14 @@ const formatEmergencyPatientResponse = (record) => ({
 // @access  Private (Authenticated Patient)
 const createHealthId = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const userId = req.user._id || req.user.id;
     const { dateOfBirth, gender, phoneNumber, bloodGroup, emergencyContact, address, healthProfile } = req.body;
 
-    let userRecord = await SupabaseDb.users.findById(userId);
+    let userRecord = await MongoDb.users.findById(userId);
     const fullName = req.body.fullName || (userRecord ? userRecord.name : req.user.name) || 'Patient User';
     const email = (req.body.email || (userRecord ? userRecord.email : req.user.email) || '').toLowerCase().trim();
 
-    const existingRecord = await SupabaseDb.healthIds.findOne({ userId });
+    const existingRecord = await MongoDb.healthIds.findOne({ userId });
     if (existingRecord) {
       return res.status(400).json({
         success: false,
@@ -133,7 +122,7 @@ const createHealthId = async (req, res) => {
     }
 
     const newHealthIdStr = await generateUniqueHealthId();
-    const healthIdRecord = await SupabaseDb.healthIds.create({
+    const healthIdRecord = await MongoDb.healthIds.create({
       healthId: newHealthIdStr,
       userId,
       fullName,
@@ -172,37 +161,30 @@ const createHealthId = async (req, res) => {
   }
 };
 
-// @desc    Get authenticated patient's own Health ID from Supabase
+// @desc    Get authenticated patient's own Health ID from MongoDB
 // @route   GET /api/health-id/me
 // @access  Private (Authenticated Patient)
 const getMyHealthId = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const userId = req.user._id || req.user.id;
-    let record = await SupabaseDb.healthIds.findOne({ userId });
+    let record = await MongoDb.healthIds.findOne({ userId });
 
     // Auto-generate Health ID if patient signed up but hasn't initialized one yet
     if (!record) {
-      const userRecord = await SupabaseDb.users.findById(userId);
+      const userRecord = await MongoDb.users.findById(userId);
       const existingHid = userRecord?.healthId;
       const newHealthIdStr = (existingHid && existingHid.startsWith('JIV-'))
         ? existingHid
         : await generateUniqueHealthId();
 
-      record = await SupabaseDb.healthIds.create({
+      record = await MongoDb.healthIds.create({
         healthId: newHealthIdStr,
         userId,
         fullName: userRecord ? userRecord.name : (req.user ? req.user.name : 'Patient User'),
         email: userRecord ? userRecord.email : (req.user ? req.user.email : ''),
-        dateOfBirth: userRecord?.dateOfBirth || userRecord?.dob || null,
-        gender: userRecord?.gender || null,
-        bloodGroup: userRecord?.bloodGroup || null
+        dateOfBirth: userRecord?.dateOfBirth || userRecord?.dob || '2000-01-01',
+        gender: userRecord?.gender || 'Unspecified',
+        bloodGroup: userRecord?.bloodGroup || 'O+'
       });
 
       if (userRecord && (!userRecord.healthId || userRecord.healthId !== newHealthIdStr)) {
@@ -236,7 +218,7 @@ const getMyHealthId = async (req, res) => {
   }
 };
 
-// @desc    Search patient Health ID in Supabase PostgreSQL
+// @desc    Search patient Health ID in MongoDB
 // @route   GET /api/health-id/search?healthId=JIV-2026-XXXXXX
 // @access  Public / Private (Healthcare Professionals & Verified Users)
 const searchHealthId = async (req, res) => {
@@ -251,47 +233,40 @@ const searchHealthId = async (req, res) => {
       });
     }
 
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
-    let record = await SupabaseDb.healthIds.findOne({
+    let record = await MongoDb.healthIds.findOne({
       $or: [
         { healthId: sanitizedHealthId },
         { healthId: sanitizedHealthId.replace(/[^A-Z0-9]/g, '') }
       ]
     });
 
-    // 1. Check if patient user has this health_id in users table
+    // 1. Check if patient user has this health_id in users collection
     if (!record) {
-      const userMatch = await SupabaseDb.users.findOne({ healthId: sanitizedHealthId });
+      const userMatch = await MongoDb.users.findOne({ healthId: sanitizedHealthId });
       if (userMatch) {
-        // Auto-sync into health_ids table
-        record = await SupabaseDb.healthIds.create({
+        // Auto-sync into health_ids collection
+        record = await MongoDb.healthIds.create({
           healthId: sanitizedHealthId,
-          userId: userMatch.id,
+          userId: userMatch._id || userMatch.id,
           fullName: userMatch.name,
           email: userMatch.email,
           phoneNumber: userMatch.phone || '',
-          dateOfBirth: userMatch.dateOfBirth || userMatch.dob || null,
-          gender: userMatch.gender || null,
-          bloodGroup: userMatch.bloodGroup || null,
-          emergencyContact: userMatch.emergencyContact || null,
-          healthProfile: userMatch.healthProfile || null
+          dateOfBirth: userMatch.dateOfBirth || userMatch.dob || '2000-01-01',
+          gender: userMatch.gender || 'Unspecified',
+          bloodGroup: userMatch.bloodGroup || 'O+',
+          emergencyContact: userMatch.emergencyContact || {},
+          healthProfile: userMatch.healthProfile || {}
         }).catch(() => null);
 
         if (!record) {
           record = {
             healthId: sanitizedHealthId,
             fullName: userMatch.name,
-            dateOfBirth: userMatch.dateOfBirth || userMatch.dob || null,
-            gender: userMatch.gender || null,
-            bloodGroup: userMatch.bloodGroup || null,
-            emergencyContact: userMatch.emergencyContact || null,
-            healthProfile: userMatch.healthProfile || null,
+            dateOfBirth: userMatch.dateOfBirth || userMatch.dob || '2000-01-01',
+            gender: userMatch.gender || 'Unspecified',
+            bloodGroup: userMatch.bloodGroup || 'O+',
+            emergencyContact: userMatch.emergencyContact || {},
+            healthProfile: userMatch.healthProfile || {},
             createdAt: userMatch.createdAt
           };
         }

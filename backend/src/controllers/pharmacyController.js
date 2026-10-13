@@ -1,17 +1,10 @@
-const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
+const { MongoDb } = require('../services/mongoDbService');
 
 // @desc    Create a new Pharmacy Order
 // @route   POST /api/pharmacy/orders
 // @access  Private (Authenticated Patient / User)
 const createPharmacyOrder = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const {
       pharmacyId,
       pharmacyName,
@@ -41,7 +34,7 @@ const createPharmacyOrder = async (req, res) => {
     const orderDate = date || new Date().toISOString().split('T')[0];
     const resolvedPharmacyName = pharmacyName || 'Jivexa Partner Pharmacy';
 
-    const newOrder = await SupabaseDb.pharmacyOrders.create({
+    const newOrder = await MongoDb.pharmacyOrders.create({
       patientId,
       patientName,
       pharmacyId: String(pharmacyId),
@@ -59,7 +52,7 @@ const createPharmacyOrder = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Pharmacy order placed successfully',
-      order: newOrder.toJSON()
+      order: newOrder.toJSON ? newOrder.toJSON() : newOrder
     });
   } catch (error) {
     console.error('[Pharmacy Controller Create Error]:', error);
@@ -75,35 +68,31 @@ const createPharmacyOrder = async (req, res) => {
 // @access  Private
 const getPharmacyOrders = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const userId = req.user._id || req.user.id;
     const userRole = req.user.role;
     const currentUserId = String(userId);
 
-    const allOrders = await SupabaseDb.pharmacyOrders.find();
-    const filtered = allOrders.filter((ord) => {
-      if (userRole === 'ADMIN') return true;
-      if (userRole === 'PATIENT') return String(ord.patientId) === currentUserId;
-      if (userRole === 'PHARMACY') {
-        return (
-          String(ord.pharmacyId) === currentUserId ||
-          (req.user.roleId && ord.pharmacyId === req.user.roleId) ||
-          ord.pharmacyName === req.user.name
-        );
-      }
-      return String(ord.patientId) === currentUserId;
-    });
+    let filter = {};
+    if (userRole === 'ADMIN') {
+      filter = {};
+    } else if (userRole === 'PHARMACY') {
+      filter = {
+        $or: [
+          { pharmacyId: currentUserId },
+          ...(req.user.roleId ? [{ pharmacyId: req.user.roleId }] : []),
+          { pharmacyName: req.user.name }
+        ]
+      };
+    } else {
+      filter = { patientId: currentUserId };
+    }
+
+    const orders = await MongoDb.pharmacyOrders.find(filter);
 
     return res.status(200).json({
       success: true,
-      count: filtered.length,
-      orders: filtered.map((o) => o.toJSON())
+      count: orders.length,
+      orders: orders.map((o) => (o.toJSON ? o.toJSON() : o))
     });
   } catch (error) {
     console.error('[Pharmacy Controller Get Error]:', error);
@@ -119,18 +108,11 @@ const getPharmacyOrders = async (req, res) => {
 // @access  Private
 const getPharmacyOrderById = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
     const userRole = req.user.role;
 
-    const order = await SupabaseDb.pharmacyOrders.findById(id);
+    const order = await MongoDb.pharmacyOrders.findById(id);
     if (!order) {
       return res.status(404).json({
         success: false,
@@ -153,7 +135,7 @@ const getPharmacyOrderById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      order: order.toJSON()
+      order: order.toJSON ? order.toJSON() : order
     });
   } catch (error) {
     console.error('[Pharmacy Controller GetById Error]:', error);
@@ -169,19 +151,12 @@ const getPharmacyOrderById = async (req, res) => {
 // @access  Private
 const updatePharmacyOrder = async (req, res) => {
   try {
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { id } = req.params;
     const currentUserId = String(req.user._id || req.user.id);
     const userRole = req.user.role;
     const { status, paymentStatus, deliveryAddress } = req.body;
 
-    const order = await SupabaseDb.pharmacyOrders.findById(id);
+    const order = await MongoDb.pharmacyOrders.findById(id);
     if (!order) {
       return res.status(404).json({
         success: false,
@@ -218,7 +193,7 @@ const updatePharmacyOrder = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Pharmacy order updated successfully',
-      order: order.toJSON()
+      order: order.toJSON ? order.toJSON() : order
     });
   } catch (error) {
     console.error('[Pharmacy Controller Update Error]:', error);

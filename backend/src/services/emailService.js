@@ -1,48 +1,59 @@
-const { getSupabase, isSupabaseConfigured } = require('../config/supabase');
+const nodemailer = require('nodemailer');
 
 /**
- * Resend Email Verification via Supabase Auth Email Service
- * Replaces legacy Brevo SMTP delivery with native Supabase Auth verification.
+ * Native Email Verification & Notification Service
+ * Dispatches verification emails via configured SMTP or provides development logs
  */
 const resendVerificationEmail = async (email) => {
-  const supabase = getSupabase();
-  if (!supabase || !isSupabaseConfigured()) {
-    return { 
-      success: false, 
-      error: 'Supabase Auth is not configured in backend environment' 
-    };
+  const cleanEmail = email ? email.trim().toLowerCase() : '';
+  if (!cleanEmail) {
+    return { success: false, error: 'Valid email address is required' };
   }
 
   try {
     const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
     const redirectUrl = `${frontendBase.replace(/\/$/, '')}/#/login?verified=true`;
 
-    const { data, error } = await supabase.auth.resend({
-      type: 'signup',
-      email: email.trim().toLowerCase(),
-      options: {
-        emailRedirectTo: redirectUrl
-      }
-    });
+    // If SMTP credentials configured, send real email via nodemailer
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.SMTP_PORT, 10) || 587,
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS
+        }
+      });
 
-    if (error) {
-      console.warn('[Supabase Auth Email] Resend notice:', error.message);
-      return { success: false, error: error.message };
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM || `"JIVEXA Health" <${process.env.SMTP_USER}>`,
+        to: cleanEmail,
+        subject: 'Verify your JIVEXA Health Account',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+            <h2 style="color: #059669;">JIVEXA Health Account Verification</h2>
+            <p>Welcome to Jivexa Health OS. Please click the button below to verify your account:</p>
+            <a href="${redirectUrl}" style="display: inline-block; background-color: #059669; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 16px 0;">Verify Account</a>
+            <p style="color: #64748b; font-size: 13px;">If you did not request this, please ignore this email.</p>
+          </div>
+        `
+      });
     }
 
-    console.log('[Supabase Auth Email] Verification email dispatched successfully via Supabase Auth.');
-    return { 
-      success: true, 
-      message: 'Verification email dispatched successfully via Supabase Auth.' 
+    console.log(`[Email Service] Verification link generated for ${cleanEmail} -> ${redirectUrl}`);
+    return {
+      success: true,
+      message: 'Verification email dispatched successfully.',
+      redirectUrl
     };
   } catch (err) {
-    console.error('[Supabase Auth Email] Error dispatching verification email:', err.message);
+    console.error('[Email Service] Error dispatching verification email:', err.message);
     return { success: false, error: err.message };
   }
 };
 
 module.exports = {
   resendVerificationEmail,
-  // Alias for backward compatibility
   sendOTPEmail: resendVerificationEmail
 };

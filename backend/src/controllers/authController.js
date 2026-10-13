@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { SupabaseDb, isSupabaseConfigured } = require('../services/supabaseDbService');
-const { getSupabase } = require('../config/supabase');
+const { MongoDb } = require('../services/mongoDbService');
+const User = require('../models/User');
+const HealthId = require('../models/HealthId');
 const { signupSchema, loginSchema, updateProfileSchema } = require('../validators/userValidators');
 const { resendVerificationEmail } = require('../services/emailService');
 const { 
@@ -66,22 +67,12 @@ const registerUser = async (req, res) => {
       });
     }
 
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.',
-        message: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { name, age, email, password, role } = validationResult.data;
     const userRole = (role || 'PATIENT').toUpperCase();
+    const cleanEmail = email.toLowerCase().trim();
 
-    // Generate Prefix-Based Unique Distinguishable Role ID
-    const roleId = generateRoleId(userRole);
-
-    const supabase = getSupabase();
-    const existingUser = await SupabaseDb.users.findOne({ email });
+    // Check if user already exists in MongoDB
+    const existingUser = await MongoDb.users.findOne({ email: cleanEmail });
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -90,64 +81,10 @@ const registerUser = async (req, res) => {
       });
     }
 
-    // 1. Create account via Supabase Auth admin (pre-confirmed, zero verification email sent)
-    let authUserId = null;
-    let authErrorMsg = null;
+    // Generate Prefix-Based Unique Distinguishable Role ID
+    const roleId = generateRoleId(userRole);
 
-    try {
-      const { data: adminUserData, error: adminError } = await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: {
-          name,
-          role: userRole
-        }
-      });
-
-      if (adminError) {
-        authErrorMsg = adminError.message;
-        // If already in auth.users, try to link or update password
-        if (adminError.message?.toLowerCase().includes('already') || adminError.message?.toLowerCase().includes('registered')) {
-          const { data: listData } = await supabase.auth.admin.listUsers();
-          const existingAuth = listData?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-          if (existingAuth) {
-            authUserId = existingAuth.id;
-            await supabase.auth.admin.updateUserById(authUserId, {
-              password,
-              email_confirm: true,
-              user_metadata: { name, role: userRole }
-            }).catch(() => {});
-          }
-        }
-      } else if (adminUserData?.user) {
-        authUserId = adminUserData.user.id;
-      }
-    } catch (adminException) {
-      console.warn('[Auth Controller] Supabase admin.createUser notice:', adminException.message);
-    }
-
-    // 2. Fallback to client signUp if admin API is restricted
-    if (!authUserId) {
-      try {
-        const { data: clientAuthData, error: clientAuthError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: { name, role: userRole }
-          }
-        });
-        if (clientAuthData?.user) {
-          authUserId = clientAuthData.user.id;
-        } else if (clientAuthError && !authErrorMsg) {
-          authErrorMsg = clientAuthError.message;
-        }
-      } catch (clientException) {
-        console.warn('[Auth Controller] Supabase client.signUp notice:', clientException.message);
-      }
-    }
-
-    // 3. Hash password and insert profile into public.users table
+    // Hash password with bcrypt (12 rounds)
     const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(password, salt);
     const generatedHealthId = userRole === 'PATIENT' ? generateCanonicalHealthId() : undefined;
@@ -155,7 +92,7 @@ const registerUser = async (req, res) => {
     const userProfilePayload = {
       roleId,
       name,
-      email,
+      email: cleanEmail,
       password: hashedPassword,
       role: userRole,
       age: age || null,
@@ -166,10 +103,6 @@ const registerUser = async (req, res) => {
       accountStatus: userRole === 'PATIENT' ? 'ACTIVE' : 'PENDING_DOCUMENT_REVIEW',
       usage: { tokenUsed: 0, tokenLimit: 10000, totalTokenUsed: 0 }
     };
-
-    if (authUserId) {
-      userProfilePayload.id = authUserId;
-    }
 
     if (userRole === 'DOCTOR') {
       userProfilePayload.professionalDetails = req.body.professionalDetails || {
@@ -195,23 +128,23 @@ const registerUser = async (req, res) => {
       };
     }
 
-    const userRecord = await SupabaseDb.users.create(userProfilePayload);
+    const userRecord = await MongoDb.users.create(userProfilePayload);
 
-    // Auto-create linked health_ids record for registered patients
+    // Auto-create linked health_ids record in MongoDB for registered patients
     if (userRole === 'PATIENT' && generatedHealthId) {
-      await SupabaseDb.healthIds.create({
+      await MongoDb.healthIds.create({
         healthId: generatedHealthId,
-        userId: userRecord.id,
+        userId: userRecord._id || userRecord.id,
         fullName: userRecord.name,
         email: userRecord.email,
         phoneNumber: userRecord.phone || '',
-        dateOfBirth: req.body.dateOfBirth || req.body.dob || null,
-        gender: req.body.gender || null,
-        bloodGroup: req.body.bloodGroup || null,
-        emergencyContact: req.body.emergencyContact || null,
-        healthProfile: req.body.healthProfile || null
+        dateOfBirth: req.body.dateOfBirth || req.body.dob || '2000-01-01',
+        gender: req.body.gender || 'Unspecified',
+        bloodGroup: req.body.bloodGroup || 'O+',
+        emergencyContact: req.body.emergencyContact || {},
+        healthProfile: req.body.healthProfile || {}
       }).catch((err) => {
-        console.warn('[Auth Controller] Supabase healthIds create notice:', err.message);
+        console.warn('[Auth Controller] MongoDB healthIds create notice:', err.message);
       });
     }
 
@@ -244,7 +177,7 @@ const registerUser = async (req, res) => {
   }
 };
 
-// @desc    Dispatch or Resend Email Verification (via Supabase Auth)
+// @desc    Dispatch or Resend Email Verification / OTP
 // @route   POST /api/auth/send-otp, POST /api/auth/resend-verification, POST /api/auth/resend-otp
 // @access  Public / Private
 const sendOTP = async (req, res) => {
@@ -254,21 +187,27 @@ const sendOTP = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Email address is required to send verification email' });
     }
 
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
+    const cleanEmail = email.toLowerCase().trim();
 
-    // TEMPORARILY DISABLED FOR LAUNCH
-    // Re-enable OTP after launch by setting OTP_ENABLED=true in backend/.env.
     if (!isOtpEnabled() && !req.path.includes('verification')) {
-      const resendResult = await resendVerificationEmail(email);
+      const resendResult = await resendVerificationEmail(cleanEmail);
       return res.status(resendResult.success ? 200 : 400).json(resendResult);
     }
 
-    const resendResult = await resendVerificationEmail(email);
+    const targetUser = await MongoDb.users.findOne({ email: cleanEmail });
+    if (targetUser && isOtpEnabled()) {
+      const otpEntry = await createOTPEntry('signup_verification');
+      targetUser.otpDetails = {
+        codeHash: otpEntry.otpHash,
+        expiresAt: otpEntry.expiresAt,
+        resendAvailableAt: otpEntry.resendAvailableAt,
+        purpose: 'signup_verification',
+        attempts: 0
+      };
+      await targetUser.save();
+    }
+
+    const resendResult = await resendVerificationEmail(cleanEmail);
     if (!resendResult.success) {
       return res.status(400).json({
         success: false,
@@ -279,8 +218,8 @@ const sendOTP = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Verification email dispatched to ${maskEmail(email)}. Please check your inbox.`,
-      maskedEmail: maskEmail(email)
+      message: `Verification email dispatched to ${maskEmail(cleanEmail)}. Please check your inbox.`,
+      maskedEmail: maskEmail(cleanEmail)
     });
   } catch (error) {
     console.error('[Send OTP Error]:', error);
@@ -288,64 +227,39 @@ const sendOTP = async (req, res) => {
   }
 };
 
-// @desc    Verify Email / OTP (Supabase Auth)
+// @desc    Verify Email / OTP (Native Backend Auth)
 // @route   POST /api/auth/verify-otp, POST /api/auth/check-verification
 // @access  Public / Private
 const verifyOTP = async (req, res) => {
   try {
-    // TEMPORARILY DISABLED FOR LAUNCH
-    // Re-enable OTP after launch by setting OTP_ENABLED=true in backend/.env.
-    if (!isOtpEnabled()) {
-      return res.status(410).json({
-        success: false,
-        otpDisabled: true,
-        error: 'OTP verification is disabled for launch. Please verify your account via the email confirmation link sent to your inbox.',
-        message: 'OTP verification is disabled for launch. Please verify your account via the email confirmation link sent to your inbox.'
-      });
-    }
-
     const { email, code, token: inputToken } = req.body;
     if (!email) {
       return res.status(400).json({ success: false, error: 'Email address is required' });
     }
 
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
-    const supabase = getSupabase();
-    let targetUser = await SupabaseDb.users.findOne({ email });
+    const cleanEmail = email.trim().toLowerCase();
+    let targetUser = await MongoDb.users.findOne({ email: cleanEmail });
     if (!targetUser) {
       return res.status(404).json({ success: false, error: 'User account not found' });
     }
 
-    // If code/token passed, attempt verification via Supabase Auth
-    const otpCode = code || inputToken;
-    if (otpCode) {
-      const { error } = await supabase.auth.verifyOtp({
-        email: email.trim().toLowerCase(),
-        token: otpCode.trim(),
-        type: 'signup'
-      });
-      if (error && !error.message?.toLowerCase().includes('already')) {
-        return res.status(400).json({ success: false, error: error.message });
+    const otpCode = (code || inputToken || '').trim();
+
+    // If OTP verification enabled and user has OTP details, verify against bcrypt hash
+    if (isOtpEnabled() && targetUser.otpDetails && otpCode) {
+      const otpResult = await verifyOTPEntry(targetUser.otpDetails, otpCode, 'signup_verification');
+      if (!otpResult.valid) {
+        if (targetUser.otpDetails) {
+          targetUser.otpDetails.attempts = (targetUser.otpDetails.attempts || 0) + 1;
+          await targetUser.save();
+        }
+        return res.status(400).json({ success: false, error: otpResult.message });
       }
     }
 
     targetUser.emailVerified = true;
     targetUser.verified = true;
-    targetUser.otpDetails = undefined;
-
-    if (targetUser.id && supabase.auth?.admin?.updateUserById) {
-      try {
-        await supabase.auth.admin.updateUserById(targetUser.id, { email_confirm: true });
-      } catch (adminErr) {
-        // non-fatal admin sync
-      }
-    }
+    targetUser.otpDetails = null;
 
     if (!targetUser.roleId) {
       targetUser.roleId = generateRoleId(targetUser.role);
@@ -375,16 +289,7 @@ const verifyOTP = async (req, res) => {
 
     res.cookie('token', token, getCookieOptions());
 
-    const userAuthData = targetUser.toAuthJSON ? targetUser.toAuthJSON() : {
-      id: targetUser.id || targetUser._id,
-      roleId: targetUser.roleId,
-      name: targetUser.name,
-      email: targetUser.email,
-      role: targetUser.role,
-      emailVerified: true,
-      verified: true,
-      accountStatus: targetUser.accountStatus
-    };
+    const userAuthData = targetUser.toAuthJSON ? targetUser.toAuthJSON() : targetUser;
 
     return res.status(200).json({
       success: true,
@@ -405,14 +310,12 @@ const submitRoleVerification = async (req, res) => {
   try {
     const { email, nmcRegistrationNumber, stateMedicalCouncil, vehicleNumber, category, drugLicenseNumber, gstin } = req.body;
 
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
+    const targetEmail = (email || req.user?.email || '').toLowerCase().trim();
+    let targetUser = await MongoDb.users.findOne({ email: targetEmail });
+    if (!targetUser && req.user) {
+      targetUser = await MongoDb.users.findById(req.user._id || req.user.id);
     }
 
-    let targetUser = await SupabaseDb.users.findOne({ email });
     if (!targetUser) {
       return res.status(404).json({ success: false, error: 'User account not found' });
     }
@@ -471,112 +374,53 @@ const loginUser = async (req, res) => {
       });
     }
 
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
+    const { email, password } = validationResult.data;
+    const cleanEmail = email.trim().toLowerCase();
+
+    let user = await MongoDb.users.findOne({ email: cleanEmail });
+    if (!user) {
+      return res.status(401).json({
         success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.',
-        message: 'Database service is unconfigured. Supabase PostgreSQL is required.'
+        error: 'Invalid email or password credentials',
+        message: 'Invalid email or password credentials'
       });
     }
 
-    const { email, password } = validationResult.data;
-
-    const supabase = getSupabase();
-    let user = await SupabaseDb.users.findOne({ email });
-
-    // Check account lockout
-    if (user && user.isLocked()) {
-      const remainingMins = Math.ceil((user.lockUntil.getTime() - Date.now()) / (60 * 1000));
+    // Check brute-force lockout
+    if (user.isLocked()) {
+      const remainingMins = Math.ceil((new Date(user.lockUntil).getTime() - Date.now()) / (60 * 1000));
       return res.status(423).json({
         success: false,
         error: `Account is temporarily locked due to multiple failed login attempts. Please try again in ${remainingMins} minutes.`
       });
     }
 
-    // 1. Authenticate via native Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password
-    });
-
-    if (authError) {
-      const errMsg = authError.message || '';
-      // If Supabase reports email is not confirmed, sync admin confirmation if local profile is active
-      if (errMsg.toLowerCase().includes('email not confirmed')) {
-        if (user && user.id && supabase.auth?.admin?.updateUserById) {
-          supabase.auth.admin.updateUserById(user.id, { email_confirm: true }).catch(() => {});
-        }
-      }
-
-      // Check fallback password match in public.users if user profile exists
-      let isLocalMatch = false;
-      if (user) {
-        isLocalMatch = await user.matchPassword(password);
-      }
-
-      if (!isLocalMatch) {
-        if (user) {
-          user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
-          if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
-            user.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
-            await user.save();
-            return res.status(423).json({
-              success: false,
-              error: 'Account locked due to 5 consecutive failed login attempts. Please try again in 15 minutes.'
-            });
-          }
-          await user.save();
-        }
-        return res.status(401).json({
+    // Verify password using bcrypt
+    const isMatch = await user.matchPassword(password);
+    if (!isMatch) {
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
+        user.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
+        await user.save();
+        return res.status(423).json({
           success: false,
-          error: 'Invalid email or password credentials',
-          message: 'Invalid email or password credentials'
+          error: 'Account locked due to 5 consecutive failed login attempts. Please try again in 15 minutes.'
         });
       }
-
-      if (!user.emailVerified && user.accountStatus !== 'ACTIVE') {
-        return res.status(403).json({
-          success: false,
-          requireEmailConfirmation: false,
-          requireOtp: false,
-          email,
-          error: 'Account is pending activation. Please contact support.',
-          message: 'Account is pending activation. Please contact support.'
-        });
-      }
-    }
-
-    // If Supabase auth succeeded, retrieve or create profile in public.users
-    if (!user) {
-      user = await SupabaseDb.users.findOne({ email });
-    }
-
-    if (!user && authData?.user) {
-      const newRoleId = generateRoleId('PATIENT');
-      const salt = await bcrypt.genSalt(12);
-      const hashedPassword = await bcrypt.hash(password, salt);
-      user = await SupabaseDb.users.create({
-        id: authData.user.id,
-        roleId: newRoleId,
-        name: authData.user.user_metadata?.name || 'User',
-        email: authData.user.email,
-        password: hashedPassword,
-        role: authData.user.user_metadata?.role || 'PATIENT',
-        emailVerified: true,
-        verified: true,
-        accountStatus: 'ACTIVE'
+      await user.save();
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid email or password credentials',
+        message: 'Invalid email or password credentials'
       });
     }
 
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'User profile not found' });
-    }
-
-    // Ensure verified status updated
+    // Password matches! Reset failed attempts
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
     user.emailVerified = true;
     user.verified = true;
-    user.failedLoginAttempts = 0;
-    user.lockUntil = undefined;
+
     if (user.accountStatus === 'PENDING_EMAIL_VERIFICATION') {
       if (user.role === 'PATIENT') {
         user.accountStatus = 'ACTIVE';
@@ -590,9 +434,11 @@ const loginUser = async (req, res) => {
         user.accountStatus = 'ACTIVE';
       }
     }
+
     if (!user.roleId) {
       user.roleId = generateRoleId(user.role);
     }
+
     await user.save();
 
     const token = generateToken(
@@ -609,7 +455,6 @@ const loginUser = async (req, res) => {
       success: true,
       message: 'User logged in successfully',
       token,
-      supabaseAccessToken: authData?.session?.access_token || undefined,
       user: user.toAuthJSON ? user.toAuthJSON() : user
     });
   } catch (error) {
@@ -690,23 +535,16 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
     const { name, age, email } = validationResult.data;
 
-    const user = await SupabaseDb.users.findById(req.user.id || req.user._id);
+    const user = await MongoDb.users.findById(req.user._id || req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
     if (name) user.name = name;
     if (age !== undefined) user.age = age;
-    if (email) user.email = email;
+    if (email) user.email = email.toLowerCase().trim();
 
     await user.save();
 
@@ -721,21 +559,14 @@ const updateProfile = async (req, res) => {
   }
 };
 
-// @desc    Upload / Update profile photo in Supabase Storage
+// @desc    Upload / Update profile photo (Stored as Data URL in MongoDB)
 // @route   POST /api/auth/profile-photo
 // @access  Private
 const uploadProfilePhoto = async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
+    const userId = req.user?._id || req.user?.id;
     if (!userId) {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
     }
 
     const { image, mimeType } = req.body;
@@ -744,7 +575,7 @@ const uploadProfilePhoto = async (req, res) => {
     }
 
     let base64Data = image;
-    let detectedMime = mimeType;
+    let detectedMime = mimeType || 'image/jpeg';
     if (typeof image === 'string' && image.startsWith('data:')) {
       const match = image.match(/^data:([a-zA-Z0-9\/+-]+);base64,(.+)$/);
       if (match) {
@@ -770,65 +601,31 @@ const uploadProfilePhoto = async (req, res) => {
       });
     }
 
-    let ext = 'jpg';
-    if (detectedMime.includes('png')) ext = 'png';
-    else if (detectedMime.includes('webp')) ext = 'webp';
-    else if (detectedMime.includes('jpeg') || detectedMime.includes('jpg')) ext = 'jpg';
+    const fullDataUrl = `data:${detectedMime};base64,${base64Data}`;
 
-    // User-scoped file path inside profile-photos bucket: `${userId}/avatar.${ext}`
-    const fileName = `avatar.${ext}`;
-    const filePath = `${userId}/${fileName}`;
-
-    const client = getSupabase();
-    let publicUrl = '';
-
-    if (client) {
-      const uploadRes = await client.storage.from('profile-photos').upload(filePath, buffer, {
-        contentType: detectedMime,
-        upsert: true
-      });
-
-      if (uploadRes.error) {
-        console.error('[Supabase Storage Upload Error]:', uploadRes.error);
-        return res.status(500).json({
-          success: false,
-          error: `Storage upload failed: ${uploadRes.error.message}`
-        });
-      }
-
-      const { data: urlData } = client.storage.from('profile-photos').getPublicUrl(filePath);
-      // Append cache-busting timestamp so browser reloads fresh avatar immediately
-      publicUrl = `${urlData.publicUrl}?t=${Date.now()}`;
-    } else {
-      publicUrl = `data:${detectedMime};base64,${base64Data}`;
-    }
-
-    // Persist in Supabase
-    const user = await SupabaseDb.users.findById(userId);
+    // Persist in MongoDB User
+    const user = await MongoDb.users.findById(userId);
     if (user) {
-      user.avatarUrl = publicUrl;
-      user.professionalDetails = { ...(user.professionalDetails || {}), avatarUrl: publicUrl, avatarPath: filePath };
-      user.usage = { ...(user.usage || {}), avatarUrl: publicUrl, avatarPath: filePath };
+      user.avatarUrl = fullDataUrl;
+      if (user.professionalDetails) user.professionalDetails.avatarUrl = fullDataUrl;
+      if (user.usage) user.usage.avatarUrl = fullDataUrl;
       await user.save();
     }
 
-    const healthIdRecord = await SupabaseDb.healthIds.findOne({ userId });
+    // Sync in linked HealthId
+    const healthIdRecord = await MongoDb.healthIds.findOne({ userId });
     if (healthIdRecord) {
-      healthIdRecord.healthProfile = { ...(healthIdRecord.healthProfile || {}), avatarUrl: publicUrl };
-      const hClient = getSupabase();
-      if (hClient) {
-        await hClient
-          .from('health_ids')
-          .update({ health_profile: healthIdRecord.healthProfile, updated_at: new Date().toISOString() })
-          .eq('user_id', String(userId));
-      }
+      healthIdRecord.healthProfile = {
+        ...(healthIdRecord.healthProfile || {}),
+        avatarUrl: fullDataUrl
+      };
+      await healthIdRecord.save();
     }
 
     return res.status(200).json({
       success: true,
       message: 'Profile photo uploaded successfully',
-      avatarUrl: publicUrl,
-      path: filePath
+      avatarUrl: fullDataUrl
     });
   } catch (error) {
     console.error('[Upload Profile Photo Error]:', error);
@@ -839,50 +636,28 @@ const uploadProfilePhoto = async (req, res) => {
   }
 };
 
-// @desc    Remove profile photo from Supabase Storage & user profile
+// @desc    Remove profile photo
 // @route   DELETE /api/auth/profile-photo
 // @access  Private
 const removeProfilePhoto = async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
+    const userId = req.user?._id || req.user?.id;
     if (!userId) {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
-    if (!isSupabaseConfigured()) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database service is unconfigured. Supabase PostgreSQL is required.'
-      });
-    }
-
-    const client = getSupabase();
-    if (client) {
-      const { data: files } = await client.storage.from('profile-photos').list(userId);
-      if (files && files.length > 0) {
-        const filePaths = files.map((f) => `${userId}/${f.name}`);
-        await client.storage.from('profile-photos').remove(filePaths);
-      }
-    }
-
-    const user = await SupabaseDb.users.findById(userId);
+    const user = await MongoDb.users.findById(userId);
     if (user) {
       user.avatarUrl = '';
-      if (user.professionalDetails) delete user.professionalDetails.avatarUrl;
-      if (user.usage) delete user.usage.avatarUrl;
+      if (user.professionalDetails) user.professionalDetails.avatarUrl = '';
+      if (user.usage) user.usage.avatarUrl = '';
       await user.save();
     }
 
-    const healthIdRecord = await SupabaseDb.healthIds.findOne({ userId });
+    const healthIdRecord = await MongoDb.healthIds.findOne({ userId });
     if (healthIdRecord && healthIdRecord.healthProfile) {
-      delete healthIdRecord.healthProfile.avatarUrl;
-      const hClient = getSupabase();
-      if (hClient) {
-        await hClient
-          .from('health_ids')
-          .update({ health_profile: healthIdRecord.healthProfile, updated_at: new Date().toISOString() })
-          .eq('user_id', String(userId));
-      }
+      healthIdRecord.healthProfile.avatarUrl = '';
+      await healthIdRecord.save();
     }
 
     return res.status(200).json({

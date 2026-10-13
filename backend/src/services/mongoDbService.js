@@ -1,0 +1,255 @@
+const User = require('../models/User');
+const HealthId = require('../models/HealthId');
+const Appointment = require('../models/Appointment');
+const Prescription = require('../models/Prescription');
+const PharmacyOrder = require('../models/PharmacyOrder');
+const AmbulanceRequest = require('../models/AmbulanceRequest');
+const Conversation = require('../models/Conversation');
+const {
+  connectDB,
+  disconnectDB,
+  isMongoConfigured,
+  isDatabaseConnected,
+  checkDatabaseHealth
+} = require('../config/db');
+
+/**
+ * MongoDB Data Access Repository Service
+ * Provides idiomatic, unified database access for all Jivexa controllers
+ */
+const MongoDb = {
+  // --- USERS ---
+  users: {
+    async findOne(filter = {}) {
+      const query = {};
+      if (filter.email) {
+        query.email = filter.email.toLowerCase().trim();
+      }
+      if (filter.id || filter._id) {
+        query._id = String(filter.id || filter._id);
+      }
+      if (filter.roleId) {
+        query.roleId = String(filter.roleId).trim();
+      }
+      if (filter.healthId) {
+        const cleanHid = String(filter.healthId).toUpperCase().trim();
+        query.$or = [
+          { healthId: cleanHid },
+          { healthId: cleanHid.replace(/[^A-Z0-9]/g, '') }
+        ];
+      }
+      return await User.findOne(query);
+    },
+
+    async findById(id) {
+      if (!id) return null;
+      return await User.findOne({ _id: String(id) });
+    },
+
+    async create(userData) {
+      const payload = { ...userData };
+      if (payload.id && !payload._id) {
+        payload._id = String(payload.id);
+      }
+      return await User.create(payload);
+    },
+
+    async find(filter = {}) {
+      return await User.find(filter);
+    }
+  },
+
+  // --- HEALTH IDS ---
+  healthIds: {
+    async findOne(filter = {}) {
+      const query = {};
+      if (filter.healthId) {
+        const clean = String(filter.healthId).toUpperCase().trim();
+        query.healthId = clean;
+      } else if (filter.userId) {
+        query.userId = String(filter.userId);
+      } else if (filter.$or && Array.isArray(filter.$or)) {
+        query.$or = filter.$or.map((cond) => {
+          if (cond.healthId) {
+            return { healthId: String(cond.healthId).toUpperCase().trim() };
+          }
+          return cond;
+        });
+      }
+      return await HealthId.findOne(query);
+    },
+
+    async findById(id) {
+      if (!id) return null;
+      return await HealthId.findOne({ _id: String(id) });
+    },
+
+    async create(data) {
+      const payload = { ...data };
+      if (payload.healthId) {
+        payload.healthId = payload.healthId.toUpperCase().trim();
+      }
+      if (payload.id && !payload._id) {
+        payload._id = String(payload.id);
+      }
+      return await HealthId.create(payload);
+    },
+
+    async find(filter = {}) {
+      return await HealthId.find(filter);
+    }
+  },
+
+  // --- APPOINTMENTS ---
+  appointments: {
+    async create(data) {
+      const payload = { ...data };
+      if (payload.id && !payload._id) {
+        payload._id = String(payload.id);
+      }
+      return await Appointment.create(payload);
+    },
+
+    async find(filter = {}) {
+      return await Appointment.find(filter).sort({ date: -1, createdAt: -1 });
+    },
+
+    async findById(id) {
+      if (!id) return null;
+      return await Appointment.findOne({ _id: String(id) });
+    },
+
+    async deleteById(id) {
+      if (!id) return false;
+      const res = await Appointment.deleteOne({ _id: String(id) });
+      return res.deletedCount > 0;
+    }
+  },
+
+  // --- PRESCRIPTIONS ---
+  prescriptions: {
+    async create(data) {
+      const payload = { ...data };
+      if (payload.id && !payload._id) {
+        payload._id = String(payload.id);
+      }
+      return await Prescription.create(payload);
+    },
+
+    async find(filter = {}) {
+      return await Prescription.find(filter).sort({ date: -1, createdAt: -1 });
+    },
+
+    async findById(id) {
+      if (!id) return null;
+      return await Prescription.findOne({ _id: String(id) });
+    },
+
+    async deleteById(id) {
+      if (!id) return false;
+      const res = await Prescription.deleteOne({ _id: String(id) });
+      return res.deletedCount > 0;
+    }
+  },
+
+  // --- PHARMACY ORDERS ---
+  pharmacyOrders: {
+    async create(data) {
+      const payload = { ...data };
+      if (payload.id && !payload._id) {
+        payload._id = String(payload.id);
+      }
+      return await PharmacyOrder.create(payload);
+    },
+
+    async find(filter = {}) {
+      return await PharmacyOrder.find(filter).sort({ createdAt: -1 });
+    },
+
+    async findById(id) {
+      if (!id) return null;
+      return await PharmacyOrder.findOne({ _id: String(id) });
+    },
+
+    async deleteById(id) {
+      if (!id) return false;
+      const res = await PharmacyOrder.deleteOne({ _id: String(id) });
+      return res.deletedCount > 0;
+    }
+  },
+
+  // --- AMBULANCE REQUESTS ---
+  ambulanceRequests: {
+    async create(data) {
+      const payload = { ...data };
+      if (payload.id && !payload._id) {
+        payload._id = String(payload.id);
+      }
+      return await AmbulanceRequest.create(payload);
+    },
+
+    async find(filter = {}) {
+      return await AmbulanceRequest.find(filter).sort({ createdAt: -1 });
+    },
+
+    async findById(id) {
+      if (!id) return null;
+      return await AmbulanceRequest.findOne({ _id: String(id) });
+    },
+
+    async deleteById(id) {
+      if (!id) return false;
+      const res = await AmbulanceRequest.deleteOne({ _id: String(id) });
+      return res.deletedCount > 0;
+    }
+  },
+
+  // --- CONVERSATIONS ---
+  conversations: {
+    async find(filter = {}) {
+      return await Conversation.find(filter).sort({ lastUpdated: -1 });
+    },
+
+    async findById(id) {
+      if (!id) return null;
+      return await Conversation.findOne({ _id: String(id) });
+    },
+
+    async findOne(filter = {}) {
+      return await Conversation.findOne(filter);
+    },
+
+    async upsert(id, userId, data) {
+      const payload = { ...data, userId: String(userId), lastUpdated: new Date() };
+      return await Conversation.findOneAndUpdate(
+        { _id: String(id), userId: String(userId) },
+        { $set: payload },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    },
+
+    async deleteById(id, userId) {
+      if (!id) return false;
+      const query = { _id: String(id) };
+      if (userId) query.userId = String(userId);
+      const res = await Conversation.deleteOne(query);
+      return res.deletedCount > 0;
+    },
+
+    async deleteMany(filter = {}) {
+      return await Conversation.deleteMany(filter);
+    }
+  }
+};
+
+module.exports = {
+  MongoDb,
+  // Alias for backward compatibility during transition
+  db: MongoDb,
+  connectDB,
+  disconnectDB,
+  isMongoConfigured,
+  isDatabaseConnected,
+  checkDatabaseHealth
+};
+

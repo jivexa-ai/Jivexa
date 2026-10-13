@@ -1,15 +1,16 @@
 {
   "name": "jivexa-health-backend",
   "version": "1.0.0",
-  "description": "Node.js + Express + Supabase PostgreSQL Backend for Jivexa Health OS",
+  "description": "Node.js + Express + MongoDB Atlas Backend for Jivexa Health OS",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node test-backend-suite.js",
+    "migrate:mongo": "node scripts/migrate-supabase-to-mongo.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
-    "@supabase/supabase-js": "^2.117.2",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -17,6 +18,7 @@
     "express": "^4.22.2",
     "express-validator": "^7.1.0",
     "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.11.2",
     "nodemailer": "^9.0.5",
     "openai": "^7.5.0",
     "zod": "^4.4.3"

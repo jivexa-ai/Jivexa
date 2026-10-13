@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Button } from '../../components/ui/Button';
-import { Input } from '../../components/ui/Input';
-import { Modal } from '../../components/ui/Modal';
 import { MarkdownText } from '../../components/common/MarkdownText';
-import { streamAIHealthAssistant, fetchUserTokenUsage, upgradeUserToPro } from '../../services/ai';
+import { 
+  streamAIHealthAssistant, 
+  fetchBackendConversations,
+  saveBackendConversation,
+  deleteBackendConversation,
+  clearAllBackendConversations
+} from '../../services/ai';
 import { 
   MessageSquare, Plus, Search, Trash2, Send, 
-  AlertTriangle, ShieldCheck, Check, Info, Loader2, Sparkles, Zap, Lock, Crown, User, CheckCircle,
+  AlertTriangle, ShieldCheck, Check, Info, Loader2, Sparkles, User,
   FileText, Activity, Pill, Stethoscope, Menu, X, ChevronRight, HeartPulse,
   Copy, Apple, ArrowUp, RefreshCw
 } from 'lucide-react';
@@ -39,56 +42,74 @@ export const AIAssistantChat: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   
-  // Token tracking & subscription state
-  const [tokensUsed, setTokensUsed] = useState(0);
-  const [maxTokens, setMaxTokens] = useState(1000);
-  const [subscriptionStatus, setSubscriptionStatus] = useState<'free' | 'active'>('free');
-  const [isPaywallOpen, setIsPaywallOpen] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<'monthly' | 'yearly'>('monthly');
-  const [isUpgrading, setIsUpgrading] = useState(false);
-
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch token usage on load
   useEffect(() => {
-    const loadUsage = async () => {
-      const stats = await fetchUserTokenUsage(user?.id);
-      setTokensUsed(stats.tokensUsedThisPeriod || 0);
-      setMaxTokens(stats.maxTokens || 1000);
-    };
-    loadUsage();
-  }, [user?.id]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem(`jivexa_chats_${user?.id}`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        const formatted = parsed.map((c: any) => ({
-          ...c,
-          lastUpdated: new Date(c.lastUpdated),
-          messages: (c.messages || [])
-            .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
-            .map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
-        }));
-        setConversations(formatted);
-        if (formatted.length > 0) {
-          setActiveConvId(formatted[0].id);
+    let isMounted = true;
+    const loadConversations = async () => {
+      if (user?.id) {
+        try {
+          const backendList = await fetchBackendConversations();
+          if (isMounted && Array.isArray(backendList) && backendList.length > 0) {
+            const formatted = backendList.map((c: any) => ({
+              id: c.id || c._id,
+              title: c.title || 'New Conversation',
+              lastUpdated: new Date(c.lastUpdated || Date.now()),
+              messages: (c.messages || [])
+                .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
+                .map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
+            }));
+            setConversations(formatted);
+            setActiveConvId(formatted[0].id);
+            localStorage.setItem(`jivexa_chats_${user?.id}`, JSON.stringify(formatted));
+            return;
+          }
+        } catch (err) {
+          console.warn('[AI Assistant] Failed to load conversations from backend:', err);
         }
-      } catch (e) {
-        localStorage.removeItem(`jivexa_chats_${user?.id}`);
       }
-    }
+
+      const saved = localStorage.getItem(`jivexa_chats_${user?.id}`);
+      if (saved && isMounted) {
+        try {
+          const parsed = JSON.parse(saved);
+          const formatted = parsed.map((c: any) => ({
+            ...c,
+            lastUpdated: new Date(c.lastUpdated),
+            messages: (c.messages || [])
+              .filter((m: any) => typeof m.text === 'string' && m.text.trim().length > 0)
+              .map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
+          }));
+          setConversations(formatted);
+          if (formatted.length > 0) {
+            setActiveConvId(formatted[0].id);
+          }
+        } catch (e) {
+          localStorage.removeItem(`jivexa_chats_${user?.id}`);
+        }
+      }
+    };
+
+    loadConversations();
+    return () => { isMounted = false; };
   }, [user?.id]);
 
-  const syncConversations = (list: Conversation[]) => {
+  const syncConversations = (list: Conversation[], convToSync?: Conversation) => {
     setConversations(list);
     const sanitized = list.map(c => ({
       ...c,
       messages: c.messages.filter(m => typeof m.text === 'string' && m.text.trim().length > 0)
     }));
     localStorage.setItem(`jivexa_chats_${user?.id}`, JSON.stringify(sanitized));
+
+    if (convToSync && user?.id) {
+      saveBackendConversation({
+        id: convToSync.id,
+        title: convToSync.title,
+        messages: convToSync.messages.filter(m => typeof m.text === 'string' && m.text.trim().length > 0)
+      }).catch(err => console.warn('[AI Assistant] Sync error:', err));
+    }
   };
 
   useEffect(() => {
@@ -105,7 +126,7 @@ export const AIAssistantChat: React.FC = () => {
       lastUpdated: new Date()
     };
     const updated = [newConv, ...conversations];
-    syncConversations(updated);
+    syncConversations(updated, newConv);
     setActiveConvId(newConv.id);
     setIsMobileSidebarOpen(false);
     setTimeout(() => {
@@ -113,15 +134,6 @@ export const AIAssistantChat: React.FC = () => {
     }, 100);
   };
 
-  const handleUpgradeToPro = async () => {
-    setIsUpgrading(true);
-    const res = await upgradeUserToPro(user?.id);
-    setIsUpgrading(false);
-    if (res.success) {
-      setSubscriptionStatus('active');
-      setIsPaywallOpen(false);
-    }
-  };
 
   const handleCopyMessage = (id: string, text: string) => {
     navigator.clipboard.writeText(text);
@@ -146,6 +158,7 @@ export const AIAssistantChat: React.FC = () => {
       };
       currentConvs = [newConv, ...currentConvs];
       currentConvId = newId;
+      setActiveConvId(newId);
     }
 
     const targetConvIndex = currentConvs.findIndex((c) => c.id === currentConvId);
@@ -172,7 +185,7 @@ export const AIAssistantChat: React.FC = () => {
       ...currentConvs.filter((c) => c.id !== currentConvId)
     ];
 
-    syncConversations(sorted);
+    syncConversations(sorted, targetConv);
     setInputMessage('');
     setIsLoading(true);
 
@@ -248,50 +261,66 @@ export const AIAssistantChat: React.FC = () => {
             );
           }
         },
-        user?.id
+        user?.id,
+        currentConvId
       );
 
-      // Finalize streaming message state
-      setConversations((prev) => 
-        prev.map((c) => {
+      // Finalize streaming message state and sync to storage
+      const finalAiMsg: ChatMessage = {
+        id: aiMsgId,
+        sender: 'ai',
+        text: streamingText || 'JIVEXA Assistant provided no response.',
+        timestamp: new Date(),
+        provider: currentProvider,
+        isEmergency: isEmergencyFlag,
+        isStreaming: false
+      };
+
+      setConversations((prev) => {
+        const updated = prev.map((c) => {
           if (c.id === currentConvId) {
+            const msgsWithoutStreaming = c.messages.filter(m => m.id !== aiMsgId);
             return {
               ...c,
-              messages: c.messages.map((m) => 
-                m.id === aiMsgId ? { ...m, isStreaming: false, text: streamingText || m.text } : m
-              )
+              lastUpdated: new Date(),
+              messages: [...msgsWithoutStreaming, finalAiMsg]
             };
           }
           return c;
-        })
-      );
+        });
+        const activeOne = updated.find(c => c.id === currentConvId);
+        syncConversations(updated, activeOne);
+        return updated;
+      });
 
-      const stats = await fetchUserTokenUsage(user?.id);
-      setTokensUsed(stats.tokensUsedThisPeriod || 0);
-      setMaxTokens(stats.maxTokens || 1000);
     } catch (err) {
       console.error('[AI Chat Error]', err);
-      // Ensure we never leave an empty message on error
-      setConversations((prev) => 
-        prev.map((c) => {
+      // Ensure we never leave an empty message on error, and persist the state
+      const errorAiMsg: ChatMessage = {
+        id: aiMsgId,
+        sender: 'ai',
+        text: streamingText || 'JIVEXA Assistant is temporarily unavailable. Please verify your connection and try again.',
+        timestamp: new Date(),
+        provider: currentProvider,
+        isStreaming: false
+      };
+
+      setConversations((prev) => {
+        const updated = prev.map((c) => {
           if (c.id === currentConvId) {
+            const msgsWithoutStreaming = c.messages.filter(m => m.id !== aiMsgId);
             return {
               ...c,
-              messages: c.messages.map((m) => 
-                m.id === aiMsgId 
-                  ? { 
-                      ...m, 
-                      isStreaming: false, 
-                      text: streamingText || 'JIVEXA Assistant is temporarily unavailable. Please verify your connection and try again.',
-                      provider: currentProvider
-                    } 
-                  : m
-              )
+              lastUpdated: new Date(),
+              messages: [...msgsWithoutStreaming, errorAiMsg]
             };
           }
           return c;
-        })
-      );
+        });
+        const activeOne = updated.find(c => c.id === currentConvId);
+        syncConversations(updated, activeOne);
+        return updated;
+      });
     } finally {
       setIsLoading(false);
     }
@@ -304,11 +333,17 @@ export const AIAssistantChat: React.FC = () => {
     if (activeConvId === id) {
       setActiveConvId(filtered.length > 0 ? filtered[0].id : null);
     }
+    if (user?.id) {
+      deleteBackendConversation(id).catch(err => console.warn('[AI Assistant] Delete backend error:', err));
+    }
   };
 
   const clearAllConversations = () => {
     syncConversations([]);
     setActiveConvId(null);
+    if (user?.id) {
+      clearAllBackendConversations().catch(err => console.warn('[AI Assistant] Clear backend error:', err));
+    }
   };
 
   const filteredConvs = conversations.filter((c) => 
@@ -357,8 +392,6 @@ export const AIAssistantChat: React.FC = () => {
     { label: '📋 Questions for Cardiologist', prompt: 'What questions should I ask my cardiologist during a routine heart checkup?' }
   ];
 
-  const tokenPercentage = Math.min((tokensUsed / maxTokens) * 100, 100);
-
   return (
     <div className="jivexa-ai-wrapper">
       
@@ -383,43 +416,8 @@ export const AIAssistantChat: React.FC = () => {
           </div>
         </div>
 
-        {/* TOPBAR CONTROLS & TOKEN PILL */}
+        {/* TOPBAR CONTROLS */}
         <div className="topbar-actions">
-          {/* iOS-Style Usage Capsule */}
-          <div 
-            className="token-capsule"
-            title={`${tokensUsed.toLocaleString()} of ${maxTokens.toLocaleString()} tokens used this billing cycle`}
-            onClick={() => subscriptionStatus === 'free' && setIsPaywallOpen(true)}
-          >
-            <div className="token-capsule-icon">
-              <Zap size={13} />
-            </div>
-            <div className="token-capsule-text">
-              <span className="token-label">AI Allocation</span>
-              <span className="token-numbers">{tokensUsed.toLocaleString()} / {maxTokens.toLocaleString()}</span>
-            </div>
-            <div className="token-gauge-track">
-              <div 
-                className="token-gauge-fill" 
-                style={{ 
-                  width: `${tokenPercentage}%`,
-                  backgroundColor: tokenPercentage > 85 ? '#ef4444' : '#0f766e'
-                }} 
-              />
-            </div>
-            {subscriptionStatus === 'free' && (
-              <span className="pro-upgrade-badge">
-                <Crown size={11} /> Pro
-              </span>
-            )}
-          </div>
-
-          {/* Secure Channel Badge */}
-          <div className="security-capsule">
-            <Lock size={12} />
-            <span className="security-text">256-bit Encrypted</span>
-          </div>
-
           {/* Mobile History Toggle */}
           <button
             type="button"
@@ -760,11 +758,23 @@ export const AIAssistantChat: React.FC = () => {
 
           </div>
 
-          {/* FOLLOW-UP QUICK PROMPTS (WHEN AI FINISHED RESPONDING) */}
-          {activeConv && activeConv.messages.length > 0 && !isLoading && (
-            <div className="followup-prompts-bar">
-              {activeConv.messages[activeConv.messages.length - 1].sender === 'ai' && (
-                [
+          {/* FOLLOW-UP QUICK PROMPTS (ONLY WHEN AI FINISHED RESPONDING TO CLINICAL TOPICS) */}
+          {activeConv && activeConv.messages.length >= 2 && !isLoading && (() => {
+            const lastAiMsg = activeConv.messages[activeConv.messages.length - 1];
+            const lastUserMsg = [...activeConv.messages].reverse().find(m => m.sender === 'user');
+            if (lastAiMsg.sender !== 'ai' || !lastUserMsg) return null;
+            
+            const userText = lastUserMsg.text.toLowerCase().trim();
+            const isCasual = [
+              'hi', 'hello', 'hey', 'namaste', 'mera naam', 'mera name', 'what is my name',
+              'who are you', 'tum kaun ho', 'aap kaun ho', 'kaise ho', 'how are you', 'thank', 'thanks', 'ok', 'okay'
+            ].some(k => userText === k || userText.startsWith(k));
+
+            if (isCasual) return null;
+
+            return (
+              <div className="followup-prompts-bar">
+                {[
                   'What questions should I ask my doctor?',
                   'Explain key reference ranges for this condition.',
                   'What lifestyle and diet modifications help?',
@@ -779,10 +789,10 @@ export const AIAssistantChat: React.FC = () => {
                     <Sparkles size={12} className="chip-sparkle" />
                     <span>{q}</span>
                   </button>
-                ))
-              )}
-            </div>
-          )}
+                ))}
+              </div>
+            );
+          })()}
 
           {/* INPUT FORM: APPLE-STYLE FLOATING PILL COMPOSER */}
           <div className="chat-composer-wrapper">
@@ -824,113 +834,6 @@ export const AIAssistantChat: React.FC = () => {
 
       </div>
 
-      {/* JIVEXA PRO PREMIUM UPGRADE MODAL */}
-      <Modal isOpen={isPaywallOpen} onClose={() => setIsPaywallOpen(false)} title="👑 UNLOCK JIVEXA PRO HEALTH AI">
-        <div className="pro-modal-body">
-          <div className="pro-modal-crown">
-            <Crown size={34} />
-          </div>
-
-          <div className="pro-modal-headings">
-            <h3 className="pro-modal-title">
-              Monthly Free Token Allocation Reached
-            </h3>
-            <p className="pro-modal-subtitle">
-              Upgrade to <strong>JIVEXA Pro</strong> for unlimited AI health conversations, advanced lab analysis, and zero-queue clinical priority.
-            </p>
-          </div>
-
-          {/* SUBSCRIPTION PLAN SELECTION CARDS */}
-          <div className="pro-plans-grid">
-            {/* MONTHLY PLAN */}
-            <div 
-              onClick={() => setSelectedPlan('monthly')}
-              className={`pro-plan-card ${selectedPlan === 'monthly' ? 'selected' : ''}`}
-            >
-              <div className="plan-badge">Monthly Plan</div>
-              <div className="plan-price-row">
-                <span className="price-num">₹149</span>
-                <span className="price-cadence">/ month</span>
-              </div>
-              <p className="plan-note">
-                Flexible billing, cancel anytime
-              </p>
-              {selectedPlan === 'monthly' && (
-                <div className="plan-selected-check">
-                  <CheckCircle size={18} />
-                </div>
-              )}
-            </div>
-
-            {/* YEARLY PLAN */}
-            <div 
-              onClick={() => setSelectedPlan('yearly')}
-              className={`pro-plan-card ${selectedPlan === 'yearly' ? 'selected' : ''}`}
-            >
-              <div className="plan-badge-row">
-                <span className="plan-badge">Annual Plan</span>
-                <span className="save-pill">SAVE 16%</span>
-              </div>
-              <div className="plan-price-row">
-                <span className="price-num">₹1,500</span>
-                <span className="price-cadence">/ year</span>
-              </div>
-              <p className="plan-note">
-                Just ₹125/month — Best value for families
-              </p>
-              {selectedPlan === 'yearly' && (
-                <div className="plan-selected-check">
-                  <CheckCircle size={18} />
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* FEATURE CHECKLIST */}
-          <div className="pro-perks-card">
-            <div className="perk-item">
-              <Check size={16} className="perk-check" />
-              <span>Unlimited Google Gemini AI Health Consultations</span>
-            </div>
-            <div className="perk-item">
-              <Check size={16} className="perk-check" />
-              <span>Comprehensive Blood & Diagnostic Lab Report Explanations</span>
-            </div>
-            <div className="perk-item">
-              <Check size={16} className="perk-check" />
-              <span>Zero-Wait Telemetry Server Priority Allocation</span>
-            </div>
-          </div>
-
-          {/* ACTIONS */}
-          <div className="pro-actions">
-            <Button
-              isLoading={isUpgrading}
-              onClick={handleUpgradeToPro}
-              style={{
-                background: 'linear-gradient(135deg, #0f766e 0%, #059669 100%)',
-                color: 'white',
-                borderRadius: '16px',
-                height: '48px',
-                fontWeight: 800,
-                fontSize: '0.96rem',
-                boxShadow: '0 8px 20px rgba(15, 118, 110, 0.3)',
-                width: '100%'
-              }}
-            >
-              <Crown size={18} /> Activate JIVEXA Pro ({selectedPlan === 'monthly' ? '₹149 / Month' : '₹1,500 / Year'})
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={() => setIsPaywallOpen(false)}
-              style={{ borderRadius: '16px', width: '100%', borderColor: '#cbd5e1' }}
-            >
-              Cancel & Continue Free
-            </Button>
-          </div>
-        </div>
-      </Modal>
 
       {/* APPLE-INSPIRED STYLESHEET */}
       <style>{`
