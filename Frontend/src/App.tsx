@@ -5,6 +5,7 @@ import {
   Route,
   useLocation,
 } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 
 // Layout wrappers & Protected Route
 import {
@@ -764,6 +765,7 @@ export const App: React.FC = () => {
 
         </Routes>
       </Router>
+      <Analytics />
     </ErrorBoundary>
   );
 };
